@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>四人斗地主</title>
+    <style>
+        /* 基础样式与重置 */
+        * {
+            -webkit-tap-highlight-color: rgba(0,0,0,0);
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a5c2a;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        /* 游戏主容器：径向渐变背景 */
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: -webkit-radial-gradient(circle, #1e6b31 0%, #1a5c2a 100%);
+            background: radial-gradient(circle, #1e6b31 0%, #1a5c2a 100%);
+        }
+
+        /* 顶部栏 */
+        .top-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 40px;
+            background: rgba(0, 0, 0, 0.4);
+            display: -webkit-flex;
+            display: flex;
+            -webkit-align-items: center;
+            align-items: center;
+            -webkit-justify-content: space-between;
+            justify-content: space-between;
+            padding: 0 12px;
+            z-index: 10;
+        }
+        .game-title {
+            color: #f0c040;
+            font-size: 15px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+        .total-score {
+            color: #cccccc;
+            font-size: 14px;
+        }
+
+        /* 规则与倍数显示 */
+        .stats-bar {
+            position: absolute;
+            top: 44px;
+            width: 100%;
+            padding: 0 12px;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-justify-content: space-between;
+            justify-content: space-between;
+            z-index: 9;
+        }
+        .btn-rule, .info-display {
+            background: rgba(0, 0, 0, 0.5);
+            color: #ffffff;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .info-display { color: #f0c040; }
+
+        /* AI 玩家区域 */
+        .ai-player {
+            position: absolute;
+            text-align: center;
+            color: white;
+            z-index: 5;
+        }
+        .ai-top { top: 80px; left: 50%; -webkit-transform: translateX(-50%); transform: translateX(-50%); }
+        .ai-left { top: 35%; left: 10px; width: 35%; }
+        .ai-right { top: 35%; right: 10px; width: 35%; }
+        
+        .player-name { font-size: 12px; margin-bottom: 4px; display: block; }
+        .card-count { font-size: 14px; color: #f0c040; font-weight: bold; }
+
+        /* 底牌区域 */
+        #landlord-cards {
+            position: absolute;
+            top: 140px;
+            left: 50%;
+            -webkit-transform: translateX(-50%);
+            transform: translateX(-50%);
+            display: -webkit-flex;
+            display: flex;
+            gap: 2px;
+        }
+
+        /* 出牌区域 (中央区) */
+        .play-zone {
+            position: absolute;
+            width: 100%;
+            height: 100px;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-justify-content: center;
+            justify-content: center;
+            -webkit-align-items: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        #play-zone-top { top: 180px; }
+        #play-zone-left { top: 35%; left: 80px; -webkit-justify-content: flex-start; justify-content: flex-start; }
+        #play-zone-right { top: 35%; right: 80px; -webkit-justify-content: flex-end; justify-content: flex-end; }
+        #play-zone-player { bottom: 240px; }
+
+        /* 玩家手牌区 */
+        #player-hand {
+            position: absolute;
+            bottom: 60px;
+            width: 100%;
+            min-height: 160px;
+            padding: 0 10px;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-flex-wrap: wrap;
+            flex-wrap: wrap;
+            -webkit-justify-content: center;
+            justify-content: center;
+            z-index: 20;
+        }
+
+        /* 扑克牌通用样式 */
+        .card {
+            width: 52px;
+            height: 76px;
+            background: white;
+            border-radius: 5px;
+            position: relative;
+            margin: 2px -10px; /* 四人版重叠度更高 */
+            box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+            -webkit-transition: -webkit-transform 0.2s;
+            transition: transform 0.2s;
+        }
+        .card.selected {
+            -webkit-transform: translateY(-24px);
+            transform: translateY(-24px);
+            box-shadow: 0 0 10px #f0c040;
+        }
+        .card.back {
+            background: #2c3e50;
+            border: 2px solid white;
+        }
+        .card .value {
+            position: absolute;
+            top: 2px;
+            left: 3px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .card .suit {
+            position: absolute;
+            top: 18px;
+            left: 3px;
+            font-size: 14px;
+        }
+
+        /* 操作按钮 */
+        .action-bar {
+            position: absolute;
+            bottom: 10px;
+            width: 100%;
+            height: 44px;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-justify-content: center;
+            justify-content: center;
+            -webkit-align-items: center;
+            align-items: center;
+            gap: 15px;
+            z-index: 30;
+        }
+        .btn {
+            height: 36px;
+            padding: 0 20px;
+            border-radius: 18px;
+            border: none;
+            font-size: 15px;
+            font-weight: bold;
+            -webkit-appearance: none;
+        }
+        .btn-gray { background: #888888; color: white; }
+        .btn-gold { background: #f0c040; color: #333333; }
+        .btn:disabled { opacity: 0.5; }
+
+        /* 透视按钮 */
+        .btn-cheat {
+            position: absolute;
+            bottom: 60px;
+            right: 12px;
+            width: 40px;
+            height: 40px;
+            border-radius: 20px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-justify-content: center;
+            justify-content: center;
+            -webkit-align-items: center;
+            align-items: center;
+            font-size: 20px;
+            z-index: 25;
+            border: none;
+        }
+        .btn-cheat.active { background: #ff9800; }
+
+        /* 弹窗/模态框 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            -webkit-justify-content: center;
+            justify-content: center;
+            -webkit-align-items: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .modal-content {
+            width: 85%;
+            max-width: 300px;
+            background: -webkit-linear-gradient(top, #2e7d32, #1b5e20);
+            border: 2px solid #f0c040;
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+            text-align: center;
+        }
+        .modal-title { font-size: 24px; color: #f0c040; margin-bottom: 15px; }
+        .modal-body { font-size: 14px; text-align: left; line-height: 1.6; margin-bottom: 20px; max-height: 300px; overflow-y: auto; }
+
+        /* 文本颜色 */
+        .red { color: #e53935; }
+        .black { color: #212121; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div class="top-bar">
+        <div class="game-title">四 人 斗 地 主</div>
+        <div class="total-score" id="score-display">积分: 0</div>
+    </div>
+
+    <div class="stats-bar">
+        <button class="btn-rule" onclick="showRules()">规则</button>
+        <div class="info-display" id="game-info">倍数: 1x | 底分: 0</div>
+    </div>
+
+    <div class="ai-player ai-top">
+        <span class="player-name">电脑B (对家)</span>
+        <div id="hand-top-count" class="card-count">25</div>
+    </div>
+    <div class="ai-player ai-left">
+        <span class="player-name">电脑A (上家)</span>
+        <div id="hand-left-count" class="card-count">25</div>
+    </div>
+    <div class="ai-player ai-right">
+        <span class="player-name">电脑C (下家)</span>
+        <div id="hand-right-count" class="card-count">25</div>
+    </div>
+
+    <div id="landlord-cards">
+        </div>
+
+    <div id="play-zone-top" class="play-zone"></div>
+    <div id="play-zone-left" class="play-zone"></div>
+    <div id="play-zone-right" class="play-zone"></div>
+    <div id="play-zone-player" class="play-zone"></div>
+
+    <div id="player-hand">
+        </div>
+
+    <button id="btn-cheat" class="btn-cheat">&#128065;</button>
+
+    <div class="action-bar" id="action-bar" style="display:none;">
+        <button class="btn btn-gray" id="btn-hint">提示</button>
+        <button class="btn btn-gray" id="btn-pass">过</button>
+        <button class="btn btn-gold" id="btn-play">出牌</button>
+    </div>
+
+    <div class="action-bar" id="bid-bar" style="display:none;">
+        <button class="btn btn-gray" onclick="handleBid(0)">不叫</button>
+        <button class="btn btn-gold" onclick="handleBid(1)">1分</button>
+        <button class="btn btn-gold" onclick="handleBid(2)">2分</button>
+        <button class="btn btn-gold" onclick="handleBid(3)">3分</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modal-rules">
+    <div class="modal-content">
+        <div class="modal-title">游戏规则</div>
+        <div class="modal-body">
+            1. <b>基本信息</b>：两副牌共108张，1地主vs3农民。<br>
+            2. <b>发牌</b>：每人25张，底牌8张。<br>
+            3. <b>牌型比较</b>：4张至8张同点数为炸弹。张数多者大；张数相同比点数。<br>
+            4. <b>天王炸</b>：四张王（2大2小）最大。<br>
+            5. <b>三带</b>：四人版通常仅允许三带对，不可带单。<br>
+            6. <b>胜负</b>：地主先出完获胜，或任一农民先出完则农民方获胜。
+        </div>
+        <button class="btn btn-gold" onclick="closeModal('modal-rules')">知道了</button>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modal-result">
+    <div class="modal-content">
+        <div class="modal-title" id="result-title">胜 利 ！</div>
+        <div class="modal-body" id="result-detail" style="text-align:center;">
+            底分: 3 | 倍数: 4x<br>
+            得分: <span id="result-change">+12</span>
+        </div>
+        <button class="btn btn-gold" onclick="restartGame()">再来一局</button>
+    </div>
+</div>
+
+<script src="game.js"></script>
+<script>
+    // 基础 UI 交互逻辑 (其余核心算法放入 game.js)
+    function showRules() {
+        document.getElementById('modal-rules').style.display = '-webkit-flex';
+        document.getElementById('modal-rules').style.display = 'flex';
+    }
+    function closeModal(id) {
+        document.getElementById(id).style.display = 'none';
+    }
+    // 兼容 iOS 的音频初始化占位 (在 game.js 中实现具体上下文)
+    document.body.addEventListener('touchstart', function() {
+        if (typeof initAudio === 'function') initAudio();
+    }, { once: true });
+</script>
+
+</body>
+</html>
