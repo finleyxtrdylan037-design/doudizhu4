@@ -1,298 +1,182 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>四人斗地主 - 单文件版</title>
-    <style>
-        /* 基础样式与 iOS 兼容性 */
-        * { -webkit-tap-highlight-color: rgba(0,0,0,0); box-sizing: border-box; user-select: none; -webkit-user-select: none; }
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #1a5c2a; font-family: -apple-system, sans-serif; }
-
-        #game-container {
-            position: relative; width: 100%; height: 100%;
-            background: -webkit-radial-gradient(circle, #1e6b31 0%, #1a5c2a 100%);
-            background: radial-gradient(circle, #1e6b31 0%, #1a5c2a 100%);
-        }
-
-        /* 顶部与状态栏 */
-        .top-bar { position: absolute; top: 0; width: 100%; height: 40px; background: rgba(0,0,0,0.4); display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center; -webkit-justify-content: space-between; justify-content: space-between; padding: 0 12px; z-index: 100; }
-        .game-title { color: #f0c040; font-size: 15px; font-weight: bold; letter-spacing: 2px; }
-        .total-score { color: #ccc; font-size: 14px; }
-
-        /* AI 玩家区域 */
-        .ai-player { position: absolute; text-align: center; color: white; z-index: 50; width: 120px; }
-        .ai-top { top: 60px; left: 50%; -webkit-transform: translateX(-50%); transform: translateX(-50%); }
-        .ai-left { top: 30%; left: 10px; }
-        .ai-right { top: 30%; right: 10px; }
-        .player-name { font-size: 12px; margin-bottom: 2px; display: block; }
-        .card-count { font-size: 16px; color: #f0c040; font-weight: bold; }
-
-        /* 透视小牌样式 */
-        .cheat-card { display: inline-block; width: 18px; height: 24px; background: white; border: 1px solid #999; border-radius: 2px; margin: 1px; font-size: 10px; line-height: 24px; text-align: center; color: black; font-weight: bold; }
-        .cheat-card.red { color: #d32f2f; }
-
-        /* 出牌区域 */
-        .play-zone { position: absolute; width: 100%; height: 100px; display: -webkit-flex; display: flex; -webkit-justify-content: center; justify-content: center; -webkit-align-items: center; align-items: center; pointer-events: none; z-index: 200; }
-        #play-zone-top { top: 140px; }
-        #play-zone-left { top: 30%; left: 100px; -webkit-justify-content: flex-start; justify-content: flex-start; }
-        #play-zone-right { top: 30%; right: 100px; -webkit-justify-content: flex-end; justify-content: flex-end; }
-        #play-zone-player { bottom: 220px; }
-
-        /* 玩家手牌区 - 修复重叠 */
-        #player-hand { position: absolute; bottom: 80px; width: 100%; min-height: 160px; display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-justify-content: center; justify-content: center; padding: 0 10px; z-index: 300; }
-        
-        /* 扑克牌通用样式 */
-        .card { width: 52px; height: 76px; background: white; border-radius: 5px; position: relative; box-shadow: 1px 1px 3px rgba(0,0,0,0.3); -webkit-transition: -webkit-transform 0.2s; transition: transform 0.2s; }
-        .card.selected { -webkit-transform: translateY(-20px); transform: translateY(-20px); box-shadow: 0 0 10px #f0c040; }
-        .card.back { background: #2c3e50; border: 2px solid white; }
-        .card .value { position: absolute; top: 2px; left: 3px; font-size: 16px; font-weight: bold; }
-        .card .suit { position: absolute; top: 18px; left: 3px; font-size: 14px; }
-        .red { color: #e53935; } .black { color: #212121; }
-
-        /* 操作按钮 */
-        .action-bar { position: absolute; bottom: 15px; width: 100%; display: none; -webkit-justify-content: center; justify-content: center; gap: 10px; z-index: 1000; }
-        .btn { height: 38px; padding: 0 20px; border-radius: 19px; border: none; font-size: 15px; font-weight: bold; -webkit-appearance: none; }
-        .btn-gray { background: #888; color: white; }
-        .btn-gold { background: #f0c040; color: #333; }
-        .btn-cheat { position: absolute; bottom: 100px; right: 12px; width: 44px; height: 44px; border-radius: 22px; background: rgba(0,0,0,0.6); color: white; font-size: 20px; z-index: 500; border: none; }
-        .btn-cheat.active { background: #ff9800; }
-
-        /* 弹窗 */
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; -webkit-justify-content: center; justify-content: center; -webkit-align-items: center; align-items: center; z-index: 2000; }
-        .modal-content { width: 80%; background: #1b5e20; border: 2px solid #f0c040; border-radius: 12px; padding: 20px; color: white; text-align: center; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>&#22235;&#20154;&#26007;&#22320;&#20027;</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;}
+body{background:radial-gradient(ellipse at center,#1e6b31 0%,#1a5c2a 60%,#155223 100%);
+display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;}
+#topBar{height:40px;background:rgba(0,0,0,0.45);display:-webkit-flex;display:flex;
+-webkit-align-items:center;align-items:center;-webkit-justify-content:space-between;
+justify-content:space-between;padding:0 12px;z-index:10;}
+#topBar .title{color:#f0c040;font-size:15px;font-weight:bold;letter-spacing:2px;}
+#topBar .score{color:#aaa;font-size:13px;}
+#infoBar{position:absolute;top:44px;left:0;right:0;display:-webkit-flex;display:flex;
+-webkit-justify-content:space-between;justify-content:space-between;padding:0 12px;z-index:10;}
+#ruleBtn{background:rgba(0,0,0,0.4);color:#fff;border:none;border-radius:12px;padding:4px 12px;
+font-size:12px;-webkit-appearance:none;cursor:pointer;}
+#multInfo{background:rgba(0,0,0,0.4);color:#f0c040;border-radius:12px;padding:4px 10px;font-size:12px;}
+#gameArea{-webkit-flex:1;flex:1;position:relative;overflow:hidden;}
+.ai-area{position:absolute;text-align:center;z-index:2;}
+#aiB{top:8px;left:50%;-webkit-transform:translateX(-50%);transform:translateX(-50%);}
+#aiA{left:6px;top:50%;-webkit-transform:translateY(-50%);transform:translateY(-50%);}
+#aiC{right:6px;top:50%;-webkit-transform:translateY(-50%);transform:translateY(-50%);}
+.ai-name{color:#ccc;font-size:11px;margin-bottom:2px;}
+.ai-count{color:#aaa;font-size:10px;margin-bottom:3px;}
+.ai-cards{display:-webkit-flex;display:flex;-webkit-flex-wrap:wrap;flex-wrap:wrap;
+-webkit-justify-content:center;justify-content:center;}
+#aiB .ai-cards{max-width:240px;margin:0 auto;}
+#aiA .ai-cards,#aiC .ai-cards{max-width:80px;}
+.back-card{width:26px;height:36px;background:linear-gradient(135deg,#2255aa,#1a3d7a);
+border:1px solid #3366cc;border-radius:3px;margin:1px -5px;display:inline-block;}
+.mini-card{width:24px;height:34px;background:#fff;border:1px solid #ccc;border-radius:3px;
+margin:1px;display:inline-block;font-size:8px;text-align:left;padding:1px 2px;line-height:1.1;
+overflow:hidden;vertical-align:top;}
+.mini-card.red{color:#d00;}
+.mini-card.black{color:#222;}
+.played-area{position:absolute;z-index:3;display:-webkit-flex;display:flex;
+-webkit-flex-wrap:wrap;flex-wrap:wrap;-webkit-justify-content:center;justify-content:center;
+max-width:200px;}
+#playedA{left:75px;top:calc(50% - 50px);}
+#playedB{left:50%;top:120px;-webkit-transform:translateX(-50%);transform:translateX(-50%);}
+#playedC{right:75px;top:calc(50% - 20px);}
+#playedP{bottom:200px;left:50%;-webkit-transform:translateX(-50%);transform:translateX(-50%);}
+.played-card{width:36px;height:52px;background:#fff;border:1px solid #ccc;border-radius:4px;
+margin:1px -4px;display:inline-block;font-size:10px;text-align:left;padding:2px 3px;
+line-height:1.2;box-shadow:1px 1px 3px rgba(0,0,0,0.3);}
+.played-card.red{color:#d00;}
+.played-card.black{color:#222;}
+.pass-text{color:#f0c040;font-size:18px;font-weight:bold;text-shadow:0 0 6px rgba(240,192,64,0.5);}
+#centerArea{position:absolute;top:48%;left:50%;-webkit-transform:translate(-50%,-50%);
+transform:translate(-50%,-50%);text-align:center;z-index:5;}
+#centerArea .info{color:#f0c040;font-size:15px;font-weight:bold;margin-bottom:8px;
+text-shadow:0 0 8px rgba(240,192,64,0.4);}
+#bidBtns{display:none;}
+#bidBtns button{margin:3px;padding:7px 14px;border:none;border-radius:16px;font-size:13px;
+-webkit-appearance:none;cursor:pointer;color:#fff;}
+#bidBtns .bid-score{background:linear-gradient(to bottom,#e6a817,#c48a0e);}
+#bidBtns .bid-pass{background:rgba(100,100,100,0.8);}
+#dipaiArea{display:none;margin-top:8px;}
+#dipaiArea .dipai-cards{display:-webkit-flex;display:flex;-webkit-justify-content:center;
+justify-content:center;-webkit-flex-wrap:wrap;flex-wrap:wrap;max-width:220px;margin:0 auto;}
+#dipaiArea .dipai-card{width:38px;height:54px;background:#fff;border:1px solid #ccc;
+border-radius:4px;margin:2px;font-size:11px;text-align:left;padding:2px 3px;
+line-height:1.2;box-shadow:0 2px 6px rgba(0,0,0,0.3);}
+#dipaiArea .dipai-card.red{color:#d00;}
+#dipaiArea .dipai-card.black{color:#222;}
+#handArea{position:absolute;bottom:44px;left:0;right:0;display:-webkit-flex;display:flex;
+-webkit-flex-wrap:wrap;flex-wrap:wrap;-webkit-justify-content:center;justify-content:center;
+padding:0 4px;z-index:5;min-height:70px;}
+.hand-card{width:44px;height:64px;background:#fff;border:1px solid #bbb;border-radius:5px;
+margin:2px -9px;cursor:pointer;font-size:12px;text-align:left;padding:2px 3px;line-height:1.2;
+box-shadow:0 2px 4px rgba(0,0,0,0.25);-webkit-transition:-webkit-transform 0.1s;
+transition:transform 0.1s;position:relative;-webkit-appearance:none;}
+.hand-card.selected{-webkit-transform:translateY(-24px);transform:translateY(-24px);
+box-shadow:0 0 10px rgba(240,192,64,0.7),0 2px 4px rgba(0,0,0,0.25);}
+.hand-card.red{color:#d00;}
+.hand-card.black{color:#222;}
+#actionBar{position:absolute;bottom:4px;left:0;right:0;display:-webkit-flex;display:flex;
+-webkit-justify-content:center;justify-content:center;z-index:6;display:none;}
+#actionBar button{margin:0 5px;padding:7px 16px;border:none;border-radius:20px;font-size:13px;
+-webkit-appearance:none;cursor:pointer;font-weight:bold;}
+#hintBtn{background:rgba(120,120,120,0.8);color:#fff;}
+#passBtn{background:rgba(120,120,120,0.8);color:#fff;}
+#playBtn{background:linear-gradient(to bottom,#f0c040,#d4a020);color:#333;}
+#cheatBtn{position:absolute;bottom:50px;right:10px;width:38px;height:38px;border-radius:50%;
+background:rgba(0,0,0,0.4);border:none;color:#fff;font-size:18px;z-index:8;
+-webkit-appearance:none;cursor:pointer;line-height:38px;text-align:center;}
+#cheatBtn.active{background:rgba(220,140,20,0.8);}
+#resultModal{display:none;position:absolute;top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,0.6);z-index:20;}
+#resultCard{position:absolute;top:50%;left:50%;-webkit-transform:translate(-50%,-50%);
+transform:translate(-50%,-50%);width:70%;max-width:280px;border-radius:16px;padding:20px;text-align:center;
+box-shadow:0 8px 32px rgba(0,0,0,0.5);}
+#resultCard.win{background:linear-gradient(135deg,#3a2a00,#5a4a10);border:2px solid #f0c040;}
+#resultCard.lose{background:linear-gradient(135deg,#3a0a0a,#5a1a1a);border:2px solid #cc4444;}
+#resultTitle{font-size:28px;font-weight:bold;letter-spacing:6px;margin-bottom:12px;}
+#resultCard.win #resultTitle{color:#f0c040;}
+#resultCard.lose #resultTitle{color:#ff6666;}
+#springBadge{display:none;background:rgba(220,140,20,0.3);border:1px solid #e6a817;
+border-radius:20px;padding:4px 16px;margin-bottom:10px;color:#f0c040;font-size:14px;display:inline-block;}
+#resultDetails{color:#ccc;font-size:13px;margin-bottom:12px;line-height:1.8;}
+#resultScore{font-size:18px;font-weight:bold;margin-bottom:4px;}
+#totalScore{color:#aaa;font-size:13px;margin-bottom:16px;}
+#restartBtn{background:linear-gradient(to bottom,#f0c040,#d4a020);color:#333;border:none;
+border-radius:20px;padding:10px 32px;font-size:15px;font-weight:bold;-webkit-appearance:none;cursor:pointer;}
+#ruleModal{display:none;position:absolute;top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,0.7);z-index:25;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+#ruleContent{max-width:340px;margin:40px auto;background:linear-gradient(135deg,#1a4a28,#1e5a30);
+border:2px solid #f0c040;border-radius:16px;padding:20px;color:#ddd;font-size:12px;line-height:1.8;}
+#ruleContent h3{color:#f0c040;font-size:14px;margin:12px 0 6px;border-bottom:1px solid rgba(240,192,64,0.3);padding-bottom:4px;}
+#ruleContent .close-rule{display:block;margin:16px auto 0;background:rgba(240,192,64,0.2);
+border:1px solid #f0c040;color:#f0c040;border-radius:16px;padding:6px 24px;font-size:13px;
+-webkit-appearance:none;cursor:pointer;}
+#toast{position:absolute;top:50%;left:50%;-webkit-transform:translate(-50%,-50%);
+transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);color:#fff;padding:8px 20px;
+border-radius:20px;font-size:13px;z-index:30;display:none;pointer-events:none;}
+.confetti{position:absolute;width:8px;height:8px;z-index:19;pointer-events:none;
+-webkit-animation:confettiFall 2s ease-in forwards;animation:confettiFall 2s ease-in forwards;}
+@-webkit-keyframes confettiFall{0%{opacity:1;-webkit-transform:translateY(0) rotate(0deg);}
+100%{opacity:0;-webkit-transform:translateY(400px) rotate(720deg);}}
+@keyframes confettiFall{0%{opacity:1;transform:translateY(0) rotate(0deg);}
+100%{opacity:0;transform:translateY(400px) rotate(720deg);}}
+.landlord-badge{display:inline-block;background:#e6a817;color:#333;font-size:9px;
+border-radius:8px;padding:1px 5px;margin-left:3px;font-weight:bold;}
+</style>
 </head>
 <body>
-
-<div id="game-container">
-    <div class="top-bar">
-        <div class="game-title">\u56db \u4eba \u6597 \u5730 \u4e3b</div>
-        <div class="total-score" id="score-display">\u79ef\u5206: 0</div>
-    </div>
-
-    <div class="ai-player ai-top">
-        <span class="player-name">\u7535\u8111B (\u5bf9\u5bb6)</span>
-        <div id="hand-top-count" class="card-count">25</div>
-    </div>
-    <div class="ai-player ai-left">
-        <span class="player-name">\u7535\u8111A (\u4e0a\u5bb6)</span>
-        <div id="hand-left-count" class="card-count">25</div>
-    </div>
-    <div class="ai-player ai-right">
-        <span class="player-name">\u7535\u8111C (\u4e0b\u5bb6)</span>
-        <div id="hand-right-count" class="card-count">25</div>
-    </div>
-
-    <div id="landlord-cards" style="position:absolute; top:45px; left:50%; -webkit-transform:translateX(-50%); display:flex; gap:2px;"></div>
-
-    <div id="play-zone-top" class="play-zone"></div>
-    <div id="play-zone-left" class="play-zone"></div>
-    <div id="play-zone-right" class="play-zone"></div>
-    <div id="play-zone-player" class="play-zone"></div>
-
-    <div id="player-hand"></div>
-
-    <button id="btn-cheat" class="btn-cheat">&#128065;</button>
-
-    <div id="bid-bar" class="action-bar">
-        <button class="btn btn-gray" onclick="handleBid(0)">\u4e0d\u53eb</button>
-        <button class="btn btn-gold" onclick="handleBid(3)">3\u5206</button>
-    </div>
-
-    <div id="action-bar" class="action-bar">
-        <button class="btn btn-gray" id="btn-hint">\u63d0\u793a</button>
-        <button class="btn btn-gray" id="btn-pass">\u8fc7</button>
-        <button class="btn btn-gold" id="btn-play">\u51fa\u724c</button>
-    </div>
+<div id="topBar">
+<span class="title">&#26007; &#22320; &#20027;</span>
+<span class="score" id="scoreDisplay">&#31215;&#20998;: 0</span>
 </div>
-
-<div class="modal-overlay" id="modal-result">
-    <div class="modal-content">
-        <h2 id="result-title"></h2>
-        <button class="btn btn-gold" onclick="location.reload()">\u518d\u6765\u4e00\u5c40</button>
-    </div>
+<div id="infoBar">
+<button id="ruleBtn" onclick="showRules()">&#35268;&#21017;</button>
+<span id="multInfo"></span>
 </div>
-
-<script>
-/**
- * 四人斗地主 - 逻辑脚本
- * 采用 ES5 语法以保证最大兼容性
- */
-(function() {
-    var cards = [];
-    var players = [
-        { id: 0, hand: [], type: 'farmer', pos: 'player' },
-        { id: 1, hand: [], type: 'farmer', pos: 'left' },
-        { id: 2, hand: [], type: 'farmer', pos: 'top' },
-        { id: 3, hand: [], type: 'farmer', pos: 'right' }
-    ];
-    var bottomCards = [];
-    var landlordIdx = -1;
-    var currentPlayer = -1;
-    var lastHand = null;
-    var lastPlayerIdx = -1;
-    var selectedCards = [];
-    var isCheatOpen = false;
-    var gameStage = 'waiting';
-
-    // 初始化游戏：两副牌共 108 张
-    function initGame() {
-        cards = [];
-        var values = [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]; // 16,17为大小王
-        var suits = ['\u2660', '\u2665', '\u2666', '\u2663'];
-        for (var d = 0; d < 2; d++) {
-            for (var v = 0; v < 13; v++) {
-                for (var s = 0; s < 4; s++) {
-                    cards.push({ val: values[v], suit: suits[s], id: cards.length });
-                }
-            }
-            cards.push({ val: 16, suit: '', id: cards.length });
-            cards.push({ val: 17, suit: '', id: cards.length });
-        }
-        cards.sort(function() { return Math.random() - 0.5; });
-
-        for (var p = 0; p < 4; p++) {
-            players[p].hand = cards.splice(0, 25); // 每人 25 张
-            sortHand(players[p].hand);
-        }
-        bottomCards = cards; // 剩余 8 张
-        
-        gameStage = 'bidding';
-        renderAll();
-        document.getElementById('bid-bar').style.display = 'flex';
-    }
-
-    // 渲染函数
-    function renderAll() {
-        // 渲染玩家手牌，动态调整负边距防止重叠
-        var container = document.getElementById('player-hand');
-        container.innerHTML = '';
-        var marginX = players[0].hand.length > 20 ? '-18px' : '-10px';
-        players[0].hand.forEach(function(card) {
-            var el = document.createElement('div');
-            el.className = 'card' + (isSelected(card) ? ' selected' : '');
-            el.style.margin = '2px ' + marginX;
-            var isRed = (card.suit === '\u2665' || card.suit === '\u2666');
-            el.innerHTML = '<div class="value ' + (isRed?'red':'black') + '">' + formatVal(card.val) + '</div><div class="suit">' + card.suit + '</div>';
-            el.onclick = function() { toggleSelect(card); };
-            container.appendChild(el);
-        });
-
-        // 渲染 AI 状态与透视
-        [1,2,3].forEach(function(idx) {
-            var p = players[idx];
-            var countEl = document.getElementById('hand-' + p.pos + '-count');
-            countEl.innerHTML = '<div>' + p.hand.length + '</div>';
-            if (isCheatOpen) {
-                var cheatBox = document.createElement('div');
-                p.hand.forEach(function(c) {
-                    var isRed = (c.suit === '\u2665' || c.suit === '\u2666');
-                    cheatBox.innerHTML += '<span class="cheat-card ' + (isRed?'red':'') + '">' + formatVal(c.val) + '</span>';
-                });
-                countEl.appendChild(cheatBox);
-            }
-        });
-
-        // 按钮显示逻辑
-        document.getElementById('action-bar').style.display = (gameStage === 'playing' && currentPlayer === 0) ? 'flex' : 'none';
-        if (gameStage === 'playing' && currentPlayer === 0) {
-            document.getElementById('btn-pass').style.visibility = (lastPlayerIdx === 0 || lastPlayerIdx === -1) ? 'hidden' : 'visible';
-        }
-    }
-
-    // 逻辑辅助
-    function formatVal(v) { if(v<=10) return v; return {11:'J',12:'Q',13:'K',14:'A',15:'2',16:'\u5c0f',17:'\u5927'}[v]; }
-    function sortHand(h) { h.sort(function(a,b){return b.val-a.val;}); }
-    function isSelected(c) { return selectedCards.some(function(s){return s.id===c.id;}); }
-    function toggleSelect(c) {
-        var found = -1;
-        for(var i=0; i<selectedCards.length; i++) if(selectedCards[i].id===c.id) found=i;
-        if(found===-1) selectedCards.push(c); else selectedCards.splice(found,1);
-        renderAll();
-    }
-
-    // 叫分与阶段转换
-    window.handleBid = function(s) {
-        landlordIdx = s > 0 ? 0 : 1;
-        players[landlordIdx].hand = players[landlordIdx].hand.concat(bottomCards);
-        players[landlordIdx].type = 'landlord';
-        sortHand(players[landlordIdx].hand);
-        gameStage = 'playing';
-        currentPlayer = landlordIdx;
-        lastPlayerIdx = -1;
-        document.getElementById('bid-bar').style.display = 'none';
-        renderAll();
-        if (currentPlayer !== 0) setTimeout(executeAI, 800);
-    };
-
-    // AI 与出牌
-    function executeAI() {
-        var p = players[currentPlayer];
-        var move = null;
-        if (!lastHand || lastPlayerIdx === currentPlayer) {
-            move = [p.hand.pop()]; // 自由出牌
-        } else {
-            // 简单 AI：找一张比上一手大的单张
-            for (var i = p.hand.length-1; i>=0; i--) {
-                if (p.hand[i].val > lastHand.val) { move = [p.hand[i]]; break; }
-            }
-        }
-
-        if (move) executePlay(currentPlayer, move, {type:'single', val:move[0].val});
-        else executePass(currentPlayer);
-    }
-
-    function executePlay(pIdx, pCards, info) {
-        if (lastPlayerIdx === pIdx || lastPlayerIdx === -1) {
-            ['player','left','top','right'].forEach(function(pos){document.getElementById('play-zone-'+pos).innerHTML='';});
-        }
-        var hand = players[pIdx].hand;
-        pCards.forEach(function(pc){
-            for(var i=0; i<hand.length; i++) if(hand[i].id===pc.id){hand.splice(i,1); break;}
-        });
-        lastHand = info; lastPlayerIdx = pIdx; selectedCards = [];
-        renderPlayZone(pIdx, pCards, false);
-        if (hand.length === 0) { alert('\u6e38\u620f\u7ed3\u675f'); location.reload(); return; }
-        nextTurn();
-    }
-
-    function executePass(pIdx) { renderPlayZone(pIdx, [], true); nextTurn(); }
-    function nextTurn() { currentPlayer = (currentPlayer + 1) % 4; renderAll(); if (currentPlayer !== 0) setTimeout(executeAI, 800); }
-
-    function renderPlayZone(pIdx, pCards, isPass) {
-        var zone = document.getElementById('play-zone-' + players[pIdx].pos);
-        zone.innerHTML = isPass ? '<span style="color:#f0c040;font-weight:bold">\u8fc7</span>' : '';
-        pCards.forEach(function(c){
-            var el = document.createElement('div');
-            el.className = 'card'; el.style.margin = '0 -20px'; el.style.transform = 'scale(0.8)';
-            el.innerHTML = '<div class="value">' + formatVal(c.val) + '</div>';
-            zone.appendChild(el);
-        });
-    }
-
-    // 按钮绑定
-    document.getElementById('btn-cheat').onclick = function() { isCheatOpen = !isCheatOpen; this.classList.toggle('active', isCheatOpen); renderAll(); };
-    document.getElementById('btn-play').onclick = function() {
-        if (selectedCards.length === 1) {
-            var card = selectedCards[0];
-            if (!lastHand || lastPlayerIdx === 0 || card.val > lastHand.val) {
-                executePlay(0, selectedCards, {type:'single', val:card.val});
-            } else { alert('\u4e0d\u591f\u5927'); }
-        }
-    };
-    document.getElementById('btn-pass').onclick = function() { executePass(0); };
-    document.getElementById('btn-hint').onclick = function() {
-        var myHand = players[0].hand;
-        for (var i = myHand.length-1; i>=0; i--) {
-            if (!lastHand || lastPlayerIdx === 0 || myHand[i].val > lastHand.val) {
-                selectedCards = [myHand[i]]; renderAll(); break;
-            }
-        }
-    };
-
-    initGame();
-})();
-</script>
+<div id="gameArea">
+<div class="ai-area" id="aiB"><div class="ai-name" id="aiBname">&#30005;&#33041;B</div><div class="ai-count" id="aiBcount"></div><div class="ai-cards" id="aiBcards"></div></div>
+<div class="ai-area" id="aiA"><div class="ai-name" id="aiAname">&#30005;&#33041;A</div><div class="ai-count" id="aiAcount"></div><div class="ai-cards" id="aiAcards"></div></div>
+<div class="ai-area" id="aiC"><div class="ai-name" id="aiCname">&#30005;&#33041;C</div><div class="ai-count" id="aiCcount"></div><div class="ai-cards" id="aiCcards"></div></div>
+<div class="played-area" id="playedA"></div>
+<div class="played-area" id="playedB"></div>
+<div class="played-area" id="playedC"></div>
+<div class="played-area" id="playedP"></div>
+<div id="centerArea"><div class="info" id="centerInfo"></div><div id="bidBtns"></div><div id="dipaiArea"><div class="dipai-cards" id="dipaiCards"></div></div></div>
+<div id="handArea"></div>
+<div id="actionBar">
+<button id="hintBtn" onclick="onHint()">&#25552;&#31034;</button>
+<button id="passBtn" onclick="onPass()">&#36807;</button>
+<button id="playBtn" onclick="onPlay()">&#20986;&#29260;</button>
+</div>
+<button id="cheatBtn" onclick="toggleCheat()">&#128065;</button>
+</div>
+<div id="resultModal"><div id="resultCard"><div id="resultTitle"></div><div id="springBadge"></div><div id="resultDetails"></div><div id="resultScore"></div><div id="totalScore"></div><button id="restartBtn" onclick="startGame()">&#20877;&#26469;&#19968;&#23616;</button></div></div>
+<div id="ruleModal" onclick="hideRules()">
+<div id="ruleContent" onclick="event.stopPropagation()">
+<h3>&#22522;&#26412;&#20449;&#24687;</h3>
+&#22235;&#20154;&#26007;&#22320;&#20027;&#65292;&#20004;&#21103;&#29260;&#20849;108&#24352;&#12290;&#27599;&#20154;&#21457;25&#24352;&#65292;&#30041;8&#24352;&#24213;&#29260;&#12290;&#22320;&#20027;&#25343;&#24213;&#29260;&#21518;&#20849;33&#24352;&#65292;&#20854;&#20313;&#19977;&#20154;&#20026;&#20892;&#27665;&#12290;
+<h3>&#29260;&#28857;&#22823;&#23567;</h3>
+&#22823;&#29579; &gt; &#23567;&#29579; &gt; 2 &gt; A &gt; K &gt; Q &gt; J &gt; 10 &gt; 9 &gt; 8 &gt; 7 &gt; 6 &gt; 5 &gt; 4 &gt; 3
+<h3>&#21483;&#29260;</h3>
+&#21487;&#21483;1/2/3&#20998;&#25110;&#19981;&#21483;&#65292;&#21483;3&#20998;&#30452;&#25509;&#25104;&#20026;&#22320;&#20027;&#12290;&#22235;&#20154;&#37117;&#19981;&#21483;&#21017;&#37325;&#26032;&#21457;&#29260;&#12290;
+<h3>&#29260;&#22411;</h3>
+&#21333;&#29260;&#12289;&#23545;&#23376;&#12289;&#19977;&#26465;&#12289;&#19977;&#24102;&#19968;/&#19968;&#23545;&#12289;&#22235;&#24102;&#20108;&#21333;/&#20108;&#23545;&#12289;&#21333;&#39034;(5+)&#12289;&#21452;&#39034;(3&#23545;+)&#12289;&#39134;&#26426;(&#24102;/&#19981;&#24102;&#32709;&#33152;)&#12289;&#28856;&#24377;(4~8&#24352;&#21516;&#28857;)&#12289;&#28779;&#31661;(4&#29579;)&#12290;
+<h3>&#28856;&#24377;&#35268;&#21017;</h3>
+&#28779;&#31661; &gt; &#20219;&#20309;&#28856;&#24377;&#12290;&#24352;&#25968;&#22810;&#30340;&#28856;&#24377; &gt; &#24352;&#25968;&#23569;&#30340;&#12290;&#21516;&#24352;&#25968;&#27604;&#28857;&#25968;&#12290;
+<h3>&#20986;&#29260;</h3>
+&#22320;&#20027;&#20808;&#20986;&#65292;&#36870;&#26102;&#38024;&#36718;&#27969;&#12290;&#36319;&#29260;&#38656;&#21516;&#22411;&#12289;&#21516;&#24352;&#25968;&#12289;&#26356;&#22823;&#12290;&#28856;&#24377;/&#28779;&#31661;&#21487;&#21387;&#20219;&#20309;&#29260;&#22411;&#12290;
+<h3>&#32988;&#36127;</h3>
+&#22320;&#20027;&#20808;&#20986;&#23436;&#21017;&#22320;&#20027;&#32988;&#65292;&#20219;&#19968;&#20892;&#27665;&#20986;&#23436;&#21017;&#20892;&#27665;&#32988;&#12290;&#26149;&#22825;/&#21453;&#26149;&#22825;&#20493;&#25968;&#215;2&#12290;
+<h3>&#25805;&#20316;</h3>
+&#28857;&#20987;&#36873;&#29260;&#65292;&#28857;&#20987;&#8220;&#20986;&#29260;&#8221;&#25171;&#20986;&#12290;&#8220;&#25552;&#31034;&#8221;&#33258;&#21160;&#36873;&#29260;&#65292;&#8220;&#36807;&#8221;&#36339;&#36807;&#12290;&#21491;&#19979;&#35282;&#30524;&#30555;&#25353;&#38062;&#24320;&#21551;&#36879;&#35270;&#27169;&#24335;&#12290;
+<button class="close-rule" onclick="hideRules()">&#20851;&#38381;</button>
+</div>
+</div>
+<div id="toast"></div>
+<script src="game.js"></script>
 </body>
 </html>
