@@ -1,0 +1,1604 @@
+/* Four-Player Dou Di Zhu - game.js
+   ES5 only, iOS-compatible */
+(function() {
+  "use strict";
+
+  /* ============ CONSTANTS ============ */
+  var SUITS = ['\u2660', '\u2665', '\u2663', '\u2666'];
+  var SUIT_COLORS = [0, 1, 0, 1];
+  var RANK_NAMES = ['', '', '', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'];
+  var JOKER_SMALL = 16;
+  var JOKER_BIG = 17;
+  var PLAYER = 0, AI_C = 1, AI_B = 2, AI_A = 3;
+  var PLAYER_NAMES = ['\u73a9\u5bb6', '\u7535\u8111C', '\u7535\u8111B', '\u7535\u8111A'];
+
+  /* ============ STATE ============ */
+  var hands = [[], [], [], []];
+  var dipai = [];
+  var landlord = -1;
+  var currentTurn = -1;
+  var lastPlay = null;
+  var lastPlayer = -1;
+  var passCount = 0;
+  var totalScore = 0;
+  var baseScore = 0;
+  var multiplier = 1;
+  var gamePhase = 'idle';
+  var cheatMode = false;
+  var bidHistory = [];
+  var currentBidder = -1;
+  var highestBid = 0;
+  var highestBidder = -1;
+  var playedRecord = {};
+  var playerPlayCount = [0, 0, 0, 0];
+  var hintList = [];
+  var hintIndex = -1;
+  var toastTimer = null;
+  var audioCtx = null;
+  var selectedCards = {};
+
+  /* ============ DECK ============ */
+  function createDeck() {
+    var deck = [], id = 0, d, s, v;
+    for (d = 0; d < 2; d++) {
+      for (s = 0; s < 4; s++) {
+        for (v = 3; v <= 15; v++) {
+          deck.push({ value: v, suit: s, deck: d, id: id++ });
+        }
+      }
+      deck.push({ value: JOKER_SMALL, suit: -1, deck: d, id: id++ });
+      deck.push({ value: JOKER_BIG, suit: -1, deck: d, id: id++ });
+    }
+    return deck;
+  }
+
+  function shuffleDeck(deck) {
+    for (var i = deck.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = deck[i]; deck[i] = deck[j]; deck[j] = t;
+    }
+    return deck;
+  }
+
+  function cardDisplayHtml(c) {
+    if (c.value === JOKER_BIG) return '\u5927<br>\u738b';
+    if (c.value === JOKER_SMALL) return '\u5c0f<br>\u738b';
+    return RANK_NAMES[c.value] + '<br>' + SUITS[c.suit];
+  }
+
+  function cardColor(c) {
+    if (c.value >= JOKER_SMALL) return 'red';
+    return SUIT_COLORS[c.suit] ? 'red' : 'black';
+  }
+
+  function sortCards(arr) {
+    arr.sort(function(a, b) {
+      if (a.value !== b.value) return b.value - a.value;
+      if (a.suit !== b.suit) return a.suit - b.suit;
+      return a.deck - b.deck;
+    });
+  }
+
+  /* ============ UTILITIES ============ */
+  function getValueCounts(cards) {
+    var c = {};
+    for (var i = 0; i < cards.length; i++) {
+      var v = cards[i].value;
+      c[v] = (c[v] || 0) + 1;
+    }
+    return c;
+  }
+
+  function getVals(vc) {
+    var k = [];
+    for (var x in vc) if (vc.hasOwnProperty(x)) k.push(Number(x));
+    k.sort(function(a, b) { return a - b; });
+    return k;
+  }
+
+  function arrayIndexOf(arr, val) {
+    for (var i = 0; i < arr.length; i++) if (arr[i] === val) return i;
+    return -1;
+  }
+
+  function getCardsOfValue(hand, value, count) {
+    var r = [];
+    for (var i = 0; i < hand.length && r.length < count; i++) {
+      if (hand[i].value === value) r.push(hand[i]);
+    }
+    return r;
+  }
+
+  function getCardsExcl(hand, value, count, excl) {
+    var exIds = {};
+    for (var i = 0; i < excl.length; i++) exIds[excl[i].id] = true;
+    var r = [];
+    for (var i = 0; i < hand.length && r.length < count; i++) {
+      if (hand[i].value === value && !exIds[hand[i].id]) r.push(hand[i]);
+    }
+    return r;
+  }
+
+  function removeCards(hand, cards) {
+    var ids = {};
+    for (var i = 0; i < cards.length; i++) ids[cards[i].id] = true;
+    var r = [];
+    for (var i = 0; i < hand.length; i++) if (!ids[hand[i].id]) r.push(hand[i]);
+    return r;
+  }
+
+  function combinations(arr, k, limit) {
+    if (k === 0) return [[]];
+    if (arr.length < k) return [];
+    var res = [];
+    limit = limit || 40;
+    function go(s, ch) {
+      if (ch.length === k) { res.push(ch.slice(0)); return; }
+      if (res.length >= limit) return;
+      for (var i = s; i < arr.length; i++) {
+        ch.push(arr[i]); go(i + 1, ch); ch.pop();
+        if (res.length >= limit) return;
+      }
+    }
+    go(0, []);
+    return res;
+  }
+
+  /* ============ CLASSIFY HAND ============ */
+  function classifyHand(cards) {
+    var n = cards.length;
+    if (n === 0) return null;
+    var vc = getValueCounts(cards);
+    var vals = getVals(vc);
+    var i;
+
+    // Rocket: 2 big + 2 small jokers
+    if (n === 4) {
+      var bC = 0, sC = 0;
+      for (i = 0; i < n; i++) {
+        if (cards[i].value === JOKER_BIG) bC++;
+        if (cards[i].value === JOKER_SMALL) sC++;
+      }
+      if (bC === 2 && sC === 2) return { type: 'rocket', rank: 99, count: 4, bombSize: 99 };
+    }
+
+    // Bomb: 4-8 same non-joker
+    if (vals.length === 1 && n >= 4 && vals[0] < JOKER_SMALL) {
+      return { type: 'bomb', rank: vals[0], count: n, bombSize: n };
+    }
+
+    if (n === 1) return { type: 'single', rank: vals[0], count: 1 };
+    if (n === 2 && vals.length === 1) return { type: 'pair', rank: vals[0], count: 2 };
+    if (n === 3 && vals.length === 1) return { type: 'triple', rank: vals[0], count: 3 };
+
+    // Triple+1 / Triple+pair - pair wing MUST NOT be jokers
+    if (vals.length === 2) {
+      var v1 = vals[0], v2 = vals[1];
+      if (vc[v1] === 3 && vc[v2] === 1 && n === 4) return { type: 'triple1', rank: v1, count: 4 };
+      if (vc[v2] === 3 && vc[v1] === 1 && n === 4) return { type: 'triple1', rank: v2, count: 4 };
+      if (vc[v1] === 3 && vc[v2] === 2 && n === 5) {
+        if (v2 >= JOKER_SMALL) return null; // pair wing cannot be jokers
+        return { type: 'triple2', rank: v1, count: 5 };
+      }
+      if (vc[v2] === 3 && vc[v1] === 2 && n === 5) {
+        if (v1 >= JOKER_SMALL) return null;
+        return { type: 'triple2', rank: v2, count: 5 };
+      }
+    }
+
+    // Four+2singles or Four+2pairs
+    var fours = [], others = [];
+    for (i = 0; i < vals.length; i++) {
+      if (vc[vals[i]] === 4) fours.push(vals[i]);
+      else others.push(vals[i]);
+    }
+    if (fours.length === 1) {
+      var otherTotal = 0;
+      for (i = 0; i < others.length; i++) otherTotal += vc[others[i]];
+      if (n === 6 && otherTotal === 2) return { type: 'four2', rank: fours[0], count: n };
+      if (n === 8 && otherTotal === 4) {
+        var allP = true, hasJoker = false;
+        for (i = 0; i < others.length; i++) {
+          if (vc[others[i]] !== 2) { allP = false; break; }
+          if (others[i] >= JOKER_SMALL) hasJoker = true;
+        }
+        if (allP && others.length === 2 && !hasJoker) return { type: 'four2p', rank: fours[0], count: n };
+      }
+    }
+
+    // Straight 5+ (single run, no 2/jokers)
+    if (n >= 5) {
+      var isStr = (vals.length === n);
+      if (isStr) {
+        for (i = 0; i < vals.length; i++) {
+          if (vals[i] >= 15 || vc[vals[i]] !== 1) { isStr = false; break; }
+        }
+      }
+      if (isStr) {
+        for (i = 1; i < vals.length; i++) {
+          if (vals[i] !== vals[i - 1] + 1) { isStr = false; break; }
+        }
+        if (isStr) return { type: 'straight', rank: vals[vals.length - 1], count: n, len: n };
+      }
+    }
+
+    // Double straight (3+ pairs)
+    if (n >= 6 && n % 2 === 0) {
+      var pc = n / 2;
+      var isDS = (vals.length === pc);
+      if (isDS) {
+        for (i = 0; i < vals.length; i++) {
+          if (vals[i] >= 15 || vc[vals[i]] !== 2) { isDS = false; break; }
+        }
+      }
+      if (isDS) {
+        for (i = 1; i < vals.length; i++) {
+          if (vals[i] !== vals[i - 1] + 1) { isDS = false; break; }
+        }
+        if (isDS && pc >= 3) return { type: 'doublestraight', rank: vals[vals.length - 1], count: n, len: pc };
+      }
+    }
+
+    // Plane
+    var triples = [];
+    for (i = 0; i < vals.length; i++) {
+      if (vc[vals[i]] >= 3 && vals[i] < 15) triples.push(vals[i]);
+    }
+    triples.sort(function(a, b) { return a - b; });
+    if (triples.length >= 2) {
+      var bestRun = findBestTripleRun(triples);
+      if (bestRun && bestRun.length >= 2) {
+        var tripleTotal = bestRun.length * 3;
+        var rem = n - tripleTotal;
+        if (rem === 0) return { type: 'plane', rank: bestRun[bestRun.length - 1], count: n, len: bestRun.length, wing: 0 };
+
+        // For plane1 (wings=singles), each plane-body value must have EXACTLY 3,
+        // not more. No value in plane body can contribute to wing.
+        if (rem === bestRun.length) {
+          var planeBodyOk = true;
+          for (i = 0; i < bestRun.length; i++) {
+            if (vc[bestRun[i]] !== 3) { planeBodyOk = false; break; }
+          }
+          if (planeBodyOk) {
+            return { type: 'plane1', rank: bestRun[bestRun.length - 1], count: n, len: bestRun.length, wing: 1 };
+          }
+        }
+
+        // For plane2 (wings=pairs), plane body values must be EXACTLY 3 each,
+        // and wings must be pairs, not jokers, not from plane body.
+        if (rem === bestRun.length * 2) {
+          var planeBodyOk2 = true;
+          for (i = 0; i < bestRun.length; i++) {
+            if (vc[bestRun[i]] !== 3) { planeBodyOk2 = false; break; }
+          }
+          if (!planeBodyOk2) return null;
+
+          // Collect wing values (those NOT in plane body)
+          var wingVals = [];
+          for (i = 0; i < vals.length; i++) {
+            var vv = vals[i];
+            if (arrayIndexOf(bestRun, vv) < 0) {
+              for (var j3 = 0; j3 < vc[vv]; j3++) wingVals.push(vv);
+            }
+          }
+          var wc = {};
+          for (i = 0; i < wingVals.length; i++) wc[wingVals[i]] = (wc[wingVals[i]] || 0) + 1;
+          var allPairs = true, pairN = 0, wHasJoker = false;
+          var wk = getVals(wc);
+          for (i = 0; i < wk.length; i++) {
+            if (wc[wk[i]] % 2 !== 0) { allPairs = false; break; }
+            if (wk[i] >= JOKER_SMALL) wHasJoker = true;
+            pairN += wc[wk[i]] / 2;
+          }
+          if (allPairs && pairN === bestRun.length && !wHasJoker) {
+            return { type: 'plane2', rank: bestRun[bestRun.length - 1], count: n, len: bestRun.length, wing: 2 };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function findBestTripleRun(triples) {
+    var f = [];
+    for (var i = 0; i < triples.length; i++) if (triples[i] < 15) f.push(triples[i]);
+    if (f.length < 2) return null;
+    var best = null, cur = [f[0]];
+    for (var i = 1; i < f.length; i++) {
+      if (f[i] === f[i - 1] + 1) cur.push(f[i]);
+      else { if (cur.length >= 2 && (!best || cur.length > best.length)) best = cur.slice(0); cur = [f[i]]; }
+    }
+    if (cur.length >= 2 && (!best || cur.length > best.length)) best = cur.slice(0);
+    return best;
+  }
+
+  function canBeat(play, lastP) {
+    if (!lastP) return play !== null;
+    if (!play) return false;
+    if (play.type === 'rocket') return true;
+    if (lastP.type === 'rocket') return false;
+    if (play.type === 'bomb' && lastP.type !== 'bomb') return true;
+    if (play.type !== 'bomb' && lastP.type === 'bomb') return false;
+    if (play.type === 'bomb' && lastP.type === 'bomb') {
+      if (play.bombSize !== lastP.bombSize) return play.bombSize > lastP.bombSize;
+      return play.rank > lastP.rank;
+    }
+    if (play.type !== lastP.type) return false;
+    if (play.count !== lastP.count) return false;
+    return play.rank > lastP.rank;
+  }
+
+  /* ============ FIND VALID PLAYS ============ */
+  function findValid(hand, lastP) {
+    if (!lastP) return findFree(hand);
+    return findFollow(hand, lastP);
+  }
+
+  function findFree(hand) {
+    var res = [];
+    var vc = getValueCounts(hand);
+    var vals = getVals(vc);
+    var i, j, k, a, b;
+
+    // Singles - dedupe by value
+    var addedS = {};
+    for (i = 0; i < hand.length; i++) {
+      var v = hand[i].value;
+      if (!addedS[v]) { res.push([hand[i]]); addedS[v] = true; }
+    }
+    // Pairs
+    for (i = 0; i < vals.length; i++) {
+      if (vc[vals[i]] >= 2) res.push(getCardsOfValue(hand, vals[i], 2));
+    }
+    // Triples & triple+wings (triple must not be joker; pair wing must not be joker)
+    for (i = 0; i < vals.length; i++) {
+      if (vc[vals[i]] >= 3 && vals[i] < JOKER_SMALL) {
+        var tri = getCardsOfValue(hand, vals[i], 3);
+        res.push(tri);
+        // triple + 1 (wing can be any single including joker)
+        for (j = 0; j < vals.length; j++) {
+          if (vals[j] !== vals[i]) res.push(tri.concat(getCardsOfValue(hand, vals[j], 1)));
+        }
+        // triple + pair (pair wing NOT joker)
+        for (j = 0; j < vals.length; j++) {
+          if (vals[j] !== vals[i] && vc[vals[j]] >= 2 && vals[j] < JOKER_SMALL) {
+            res.push(tri.concat(getCardsOfValue(hand, vals[j], 2)));
+          }
+        }
+      }
+    }
+    // Bombs (4+ same value)
+    for (i = 0; i < vals.length; i++) {
+      if (vals[i] >= JOKER_SMALL) continue;
+      for (var sz = 4; sz <= (vc[vals[i]] || 0); sz++) res.push(getCardsOfValue(hand, vals[i], sz));
+    }
+    // Four+2s, Four+2p
+    for (i = 0; i < vals.length; i++) {
+      if (vc[vals[i]] >= 4 && vals[i] < JOKER_SMALL) {
+        var fc = getCardsOfValue(hand, vals[i], 4);
+        var ov = [];
+        for (j = 0; j < vals.length; j++) if (vals[j] !== vals[i]) ov.push(vals[j]);
+        // +2 singles
+        for (a = 0; a < ov.length; a++) {
+          for (b = a + 1; b < ov.length; b++) {
+            res.push(fc.concat(getCardsOfValue(hand, ov[a], 1), getCardsOfValue(hand, ov[b], 1)));
+          }
+        }
+        // +2 pairs (pairs NOT joker)
+        var pv = [];
+        for (j = 0; j < ov.length; j++) if (vc[ov[j]] >= 2 && ov[j] < JOKER_SMALL) pv.push(ov[j]);
+        for (a = 0; a < pv.length; a++) {
+          for (b = a + 1; b < pv.length; b++) {
+            res.push(fc.concat(getCardsOfValue(hand, pv[a], 2), getCardsOfValue(hand, pv[b], 2)));
+          }
+        }
+      }
+    }
+    // Straights
+    var nj = [];
+    for (i = 0; i < vals.length; i++) if (vals[i] < 15) nj.push(vals[i]);
+    for (var s = 0; s < nj.length; s++) {
+      for (var e = s + 4; e < nj.length; e++) {
+        if (nj[e] - nj[s] === e - s) {
+          var st = [];
+          for (k = s; k <= e; k++) st.push(getCardsOfValue(hand, nj[k], 1)[0]);
+          res.push(st);
+        }
+      }
+    }
+    // Double straights
+    for (s = 0; s < nj.length; s++) {
+      if (vc[nj[s]] < 2) continue;
+      var run = [nj[s]];
+      for (e = s + 1; e < nj.length; e++) {
+        if (nj[e] === nj[e - 1] + 1 && vc[nj[e]] >= 2) {
+          run.push(nj[e]);
+          if (run.length >= 3) {
+            var ds = [];
+            for (k = 0; k < run.length; k++) ds = ds.concat(getCardsOfValue(hand, run[k], 2));
+            res.push(ds);
+          }
+        } else break;
+      }
+    }
+    // Planes
+    var tv = [];
+    for (i = 0; i < nj.length; i++) if (vc[nj[i]] >= 3) tv.push(nj[i]);
+    for (s = 0; s < tv.length; s++) {
+      var prun = [tv[s]];
+      for (e = s + 1; e < tv.length; e++) {
+        if (tv[e] === tv[e - 1] + 1) {
+          prun.push(tv[e]);
+          if (prun.length >= 2) {
+            var plane = [];
+            for (k = 0; k < prun.length; k++) plane = plane.concat(getCardsOfValue(hand, prun[k], 3));
+            res.push(plane);
+            // + singles (wings NOT from plane body)
+            var ov2 = [];
+            for (j = 0; j < vals.length; j++) {
+              if (arrayIndexOf(prun, vals[j]) < 0) ov2.push(vals[j]);
+            }
+            if (ov2.length >= prun.length) {
+              var cb = combinations(ov2, prun.length, 20);
+              for (var ci = 0; ci < cb.length; ci++) {
+                var w = [];
+                for (var wi = 0; wi < cb[ci].length; wi++) {
+                  var cc = getCardsExcl(hand, cb[ci][wi], 1, plane);
+                  if (cc.length > 0) w.push(cc[0]);
+                }
+                if (w.length === prun.length) res.push(plane.concat(w));
+              }
+            }
+            // + pairs (wings NOT joker, NOT from plane body)
+            var pv2 = [];
+            for (j = 0; j < vals.length; j++) {
+              if (vals[j] >= JOKER_SMALL) continue;
+              if (arrayIndexOf(prun, vals[j]) < 0 && vc[vals[j]] >= 2) pv2.push(vals[j]);
+            }
+            if (pv2.length >= prun.length) {
+              var cb2 = combinations(pv2, prun.length, 15);
+              for (var ci2 = 0; ci2 < cb2.length; ci2++) {
+                var w2 = [];
+                for (var wi2 = 0; wi2 < cb2[ci2].length; wi2++) w2 = w2.concat(getCardsExcl(hand, cb2[ci2][wi2], 2, plane));
+                if (w2.length === prun.length * 2) res.push(plane.concat(w2));
+              }
+            }
+          }
+        } else break;
+      }
+    }
+    // Rocket
+    var bj = getCardsOfValue(hand, JOKER_BIG, 2);
+    var sj = getCardsOfValue(hand, JOKER_SMALL, 2);
+    if (bj.length === 2 && sj.length === 2) res.push(bj.concat(sj));
+    return res;
+  }
+
+  function findFollow(hand, lastP) {
+    var res = [];
+    var vc = getValueCounts(hand);
+    var vals = getVals(vc);
+    var lt = lastP.type, lr = lastP.rank;
+    var i, j, k, a, b, s, e;
+
+    if (lt === 'single') {
+      var ad = {};
+      for (i = 0; i < hand.length; i++) {
+        if (hand[i].value > lr && !ad[hand[i].value]) { res.push([hand[i]]); ad[hand[i].value] = true; }
+      }
+    } else if (lt === 'pair') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] > lr && vc[vals[i]] >= 2) res.push(getCardsOfValue(hand, vals[i], 2));
+      }
+    } else if (lt === 'triple') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] > lr && vc[vals[i]] >= 3) res.push(getCardsOfValue(hand, vals[i], 3));
+      }
+    } else if (lt === 'triple1') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] > lr && vc[vals[i]] >= 3 && vals[i] < JOKER_SMALL) {
+          var tri = getCardsOfValue(hand, vals[i], 3);
+          for (j = 0; j < vals.length; j++) {
+            if (vals[j] !== vals[i]) res.push(tri.concat(getCardsOfValue(hand, vals[j], 1)));
+          }
+        }
+      }
+    } else if (lt === 'triple2') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] > lr && vc[vals[i]] >= 3 && vals[i] < JOKER_SMALL) {
+          var tri2 = getCardsOfValue(hand, vals[i], 3);
+          for (j = 0; j < vals.length; j++) {
+            // pair wing NOT joker
+            if (vals[j] !== vals[i] && vc[vals[j]] >= 2 && vals[j] < JOKER_SMALL) {
+              res.push(tri2.concat(getCardsOfValue(hand, vals[j], 2)));
+            }
+          }
+        }
+      }
+    } else if (lt === 'four2') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] > lr && vc[vals[i]] >= 4 && vals[i] < JOKER_SMALL) {
+          var f4 = getCardsOfValue(hand, vals[i], 4);
+          var ov3 = [];
+          for (j = 0; j < vals.length; j++) if (vals[j] !== vals[i]) ov3.push(vals[j]);
+          for (a = 0; a < ov3.length; a++) {
+            for (b = a + 1; b < ov3.length; b++) {
+              res.push(f4.concat(getCardsOfValue(hand, ov3[a], 1), getCardsOfValue(hand, ov3[b], 1)));
+            }
+          }
+        }
+      }
+    } else if (lt === 'four2p') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] > lr && vc[vals[i]] >= 4 && vals[i] < JOKER_SMALL) {
+          var f4b = getCardsOfValue(hand, vals[i], 4);
+          var pv3 = [];
+          for (j = 0; j < vals.length; j++) {
+            // pair wing NOT joker
+            if (vals[j] !== vals[i] && vc[vals[j]] >= 2 && vals[j] < JOKER_SMALL) pv3.push(vals[j]);
+          }
+          for (a = 0; a < pv3.length; a++) {
+            for (b = a + 1; b < pv3.length; b++) {
+              res.push(f4b.concat(getCardsOfValue(hand, pv3[a], 2), getCardsOfValue(hand, pv3[b], 2)));
+            }
+          }
+        }
+      }
+    } else if (lt === 'straight') {
+      var slen = lastP.len;
+      var nj2 = [];
+      for (i = 0; i < vals.length; i++) if (vals[i] < 15) nj2.push(vals[i]);
+      for (s = 0; s < nj2.length; s++) {
+        if (s + slen - 1 >= nj2.length) break;
+        e = s + slen - 1;
+        if (nj2[e] - nj2[s] !== slen - 1 || nj2[e] <= lr) continue;
+        var ok = true;
+        for (k = s + 1; k <= e; k++) if (nj2[k] !== nj2[k - 1] + 1) { ok = false; break; }
+        if (ok) {
+          var st2 = [];
+          for (k = s; k <= e; k++) st2.push(getCardsOfValue(hand, nj2[k], 1)[0]);
+          res.push(st2);
+        }
+      }
+    } else if (lt === 'doublestraight') {
+      var dlen = lastP.len;
+      var nj3 = [];
+      for (i = 0; i < vals.length; i++) if (vals[i] < 15 && vc[vals[i]] >= 2) nj3.push(vals[i]);
+      for (s = 0; s < nj3.length; s++) {
+        if (s + dlen - 1 >= nj3.length) break;
+        e = s + dlen - 1;
+        if (nj3[e] - nj3[s] !== dlen - 1 || nj3[e] <= lr) continue;
+        var ok2 = true;
+        for (k = s + 1; k <= e; k++) if (nj3[k] !== nj3[k - 1] + 1) { ok2 = false; break; }
+        if (ok2) {
+          var ds2 = [];
+          for (k = s; k <= e; k++) ds2 = ds2.concat(getCardsOfValue(hand, nj3[k], 2));
+          res.push(ds2);
+        }
+      }
+    } else if (lt === 'plane' || lt === 'plane1' || lt === 'plane2') {
+      var plen = lastP.len;
+      var tv2 = [];
+      for (i = 0; i < vals.length; i++) if (vals[i] < 15 && vc[vals[i]] >= 3) tv2.push(vals[i]);
+      for (s = 0; s < tv2.length; s++) {
+        if (s + plen - 1 >= tv2.length) break;
+        e = s + plen - 1;
+        if (tv2[e] - tv2[s] !== plen - 1 || tv2[e] <= lr) continue;
+        var ok3 = true;
+        for (k = s + 1; k <= e; k++) if (tv2[k] !== tv2[k - 1] + 1) { ok3 = false; break; }
+        if (!ok3) continue;
+        var prun2 = [];
+        for (k = s; k <= e; k++) prun2.push(tv2[k]);
+        var plane2 = [];
+        for (k = 0; k < prun2.length; k++) plane2 = plane2.concat(getCardsOfValue(hand, prun2[k], 3));
+        if (lt === 'plane') {
+          res.push(plane2);
+        } else if (lt === 'plane1') {
+          var ov4 = [];
+          for (j = 0; j < vals.length; j++) {
+            if (arrayIndexOf(prun2, vals[j]) < 0) ov4.push(vals[j]);
+          }
+          var cb3 = combinations(ov4, plen, 20);
+          for (var ci3 = 0; ci3 < cb3.length; ci3++) {
+            var w3 = [];
+            for (var wi3 = 0; wi3 < cb3[ci3].length; wi3++) {
+              var cc3 = getCardsExcl(hand, cb3[ci3][wi3], 1, plane2);
+              if (cc3.length > 0) w3.push(cc3[0]);
+            }
+            if (w3.length === plen) res.push(plane2.concat(w3));
+          }
+        } else {
+          var pv4 = [];
+          for (j = 0; j < vals.length; j++) {
+            // pair wings NOT joker, NOT from plane body
+            if (vals[j] >= JOKER_SMALL) continue;
+            if (arrayIndexOf(prun2, vals[j]) < 0 && vc[vals[j]] >= 2) pv4.push(vals[j]);
+          }
+          var cb4 = combinations(pv4, plen, 15);
+          for (var ci4 = 0; ci4 < cb4.length; ci4++) {
+            var w4 = [];
+            for (var wi4 = 0; wi4 < cb4[ci4].length; wi4++) w4 = w4.concat(getCardsExcl(hand, cb4[ci4][wi4], 2, plane2));
+            if (w4.length === plen * 2) res.push(plane2.concat(w4));
+          }
+        }
+      }
+    }
+
+    // Bombs/rocket that can beat
+    if (lt !== 'rocket') {
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i] >= JOKER_SMALL) continue;
+        for (var sz2 = 4; sz2 <= (vc[vals[i]] || 0); sz2++) {
+          var bType = { type: 'bomb', rank: vals[i], count: sz2, bombSize: sz2 };
+          if (canBeat(bType, lastP)) res.push(getCardsOfValue(hand, vals[i], sz2));
+        }
+      }
+      var bj2 = getCardsOfValue(hand, JOKER_BIG, 2);
+      var sj2 = getCardsOfValue(hand, JOKER_SMALL, 2);
+      if (bj2.length === 2 && sj2.length === 2) res.push(bj2.concat(sj2));
+    }
+    return res;
+  }
+
+  /* ============ HAND COUNT ESTIMATE (improved) ============
+     Now considers straights/planes, not just singles/pairs/triples.
+     Returns a conservative (possibly higher) estimate. */
+  function estimateHandCount(hand) {
+    if (hand.length === 0) return 0;
+    var vc = getValueCounts(hand);
+    var c = {};
+    for (var x in vc) if (vc.hasOwnProperty(x)) c[x] = vc[x];
+    var count = 0;
+
+    // 1. Rocket
+    if ((c[JOKER_BIG] || 0) >= 2 && (c[JOKER_SMALL] || 0) >= 2) {
+      count++;
+      c[JOKER_BIG] -= 2;
+      c[JOKER_SMALL] -= 2;
+      if (c[JOKER_BIG] <= 0) delete c[JOKER_BIG];
+      if (c[JOKER_SMALL] <= 0) delete c[JOKER_SMALL];
+    }
+
+    // 2. Bombs (4+ same value)
+    var bvs = getVals(c);
+    for (var i = 0; i < bvs.length; i++) {
+      if (bvs[i] < JOKER_SMALL && c[bvs[i]] >= 4) {
+        count++;
+        c[bvs[i]] -= 4;
+        if (c[bvs[i]] <= 0) delete c[bvs[i]];
+      }
+    }
+
+    // 3. Try to extract straights (5+ consecutive singles or mixed)
+    //    For each value <15, use up to 1 per straight, greedy longest first
+    while (true) {
+      var singleVals = [];
+      for (var v = 3; v <= 14; v++) if ((c[v] || 0) >= 1) singleVals.push(v);
+      // find longest consecutive run >=5
+      var bestRun = null;
+      var curRun = [];
+      for (var v = 3; v <= 15; v++) {
+        if ((c[v] || 0) >= 1 && v < 15) {
+          if (curRun.length === 0 || v === curRun[curRun.length - 1] + 1) curRun.push(v);
+          else { if (curRun.length >= 5 && (!bestRun || curRun.length > bestRun.length)) bestRun = curRun.slice(0); curRun = [v]; }
+        } else {
+          if (curRun.length >= 5 && (!bestRun || curRun.length > bestRun.length)) bestRun = curRun.slice(0);
+          curRun = [];
+        }
+      }
+      if (curRun.length >= 5 && (!bestRun || curRun.length > bestRun.length)) bestRun = curRun.slice(0);
+      if (!bestRun) break;
+      count++;
+      for (var ri = 0; ri < bestRun.length; ri++) {
+        c[bestRun[ri]]--;
+        if (c[bestRun[ri]] <= 0) delete c[bestRun[ri]];
+      }
+    }
+
+    // 4. Try double straights (3+ consecutive pairs)
+    while (true) {
+      var bestRun2 = null;
+      var curRun2 = [];
+      for (var v = 3; v <= 15; v++) {
+        if ((c[v] || 0) >= 2 && v < 15) {
+          if (curRun2.length === 0 || v === curRun2[curRun2.length - 1] + 1) curRun2.push(v);
+          else { if (curRun2.length >= 3 && (!bestRun2 || curRun2.length > bestRun2.length)) bestRun2 = curRun2.slice(0); curRun2 = [v]; }
+        } else {
+          if (curRun2.length >= 3 && (!bestRun2 || curRun2.length > bestRun2.length)) bestRun2 = curRun2.slice(0);
+          curRun2 = [];
+        }
+      }
+      if (curRun2.length >= 3 && (!bestRun2 || curRun2.length > bestRun2.length)) bestRun2 = curRun2.slice(0);
+      if (!bestRun2) break;
+      count++;
+      for (var ri = 0; ri < bestRun2.length; ri++) {
+        c[bestRun2[ri]] -= 2;
+        if (c[bestRun2[ri]] <= 0) delete c[bestRun2[ri]];
+      }
+    }
+
+    // 5. Try planes (2+ consecutive triples)
+    while (true) {
+      var bestRun3 = null;
+      var curRun3 = [];
+      for (var v = 3; v <= 15; v++) {
+        if ((c[v] || 0) >= 3 && v < 15) {
+          if (curRun3.length === 0 || v === curRun3[curRun3.length - 1] + 1) curRun3.push(v);
+          else { if (curRun3.length >= 2 && (!bestRun3 || curRun3.length > bestRun3.length)) bestRun3 = curRun3.slice(0); curRun3 = [v]; }
+        } else {
+          if (curRun3.length >= 2 && (!bestRun3 || curRun3.length > bestRun3.length)) bestRun3 = curRun3.slice(0);
+          curRun3 = [];
+        }
+      }
+      if (curRun3.length >= 2 && (!bestRun3 || curRun3.length > bestRun3.length)) bestRun3 = curRun3.slice(0);
+      if (!bestRun3) break;
+      count++;
+      for (var ri = 0; ri < bestRun3.length; ri++) {
+        c[bestRun3[ri]] -= 3;
+        if (c[bestRun3[ri]] <= 0) delete c[bestRun3[ri]];
+      }
+    }
+
+    // 6. Remaining: triples, pairs, singles. Triples can carry singles/pairs.
+    var triples = 0, pairs = 0, singles = 0;
+    bvs = getVals(c);
+    for (var i = 0; i < bvs.length; i++) {
+      var ct = c[bvs[i]];
+      if (ct === 3) triples++;
+      else if (ct === 2) pairs++;
+      else if (ct === 1) singles++;
+    }
+
+    // Each triple is 1 hand, can carry a single or a pair
+    count += triples;
+    // Triples carry singles first (3+1), then pairs (3+2)
+    var useCarry = Math.min(triples, singles);
+    singles -= useCarry;
+    var remainTriples = triples - useCarry;
+    var useCarry2 = Math.min(remainTriples, pairs);
+    pairs -= useCarry2;
+
+    count += pairs + singles;
+    return count;
+  }
+
+  /* ============ PLAYED RECORD ============ */
+  function resetPlayedRecord() { playedRecord = {}; }
+  function recordPlayed(cards) {
+    for (var i = 0; i < cards.length; i++) {
+      var v = cards[i].value;
+      playedRecord[v] = (playedRecord[v] || 0) + 1;
+    }
+  }
+  function getPlayedCount(v) { return playedRecord[v] || 0; }
+  function getMaxCount(v) { return (v === JOKER_BIG || v === JOKER_SMALL) ? 2 : 8; }
+  function isCardMaster(v) {
+    for (var x = JOKER_BIG; x > v; x--) {
+      if (getPlayedCount(x) < getMaxCount(x)) return false;
+    }
+    return true;
+  }
+
+  /* ============ AI BIDDING ============ */
+  function aiBid(idx) {
+    var hand = hands[idx];
+    var score = 0;
+    var vc = getValueCounts(hand);
+    score += (vc[15] || 0) * 3;
+    score += (vc[14] || 0) * 2;
+    var bj = vc[JOKER_BIG] || 0;
+    var sj = vc[JOKER_SMALL] || 0;
+    if (bj >= 1 && sj >= 1) score += 5;
+    if (bj === 2) score += 6; else if (bj === 1) score += 3;
+    if (sj === 2) score += 3; else if (sj === 1) score += 1;
+    var vs = getVals(vc);
+    for (var i = 0; i < vs.length; i++) {
+      if (vs[i] < JOKER_SMALL && vc[vs[i]] >= 4) { score += 6; if (vc[vs[i]] >= 5) score += 2; }
+    }
+    if (score >= 18) return 3;
+    if (score >= 14) return Math.max(highestBid + 1, 2);
+    if (highestBid === 0 && score >= 8) return 1;
+    if (highestBid === 1 && score >= 11) return 2;
+    if (highestBid === 2 && score >= 14) return 3;
+    return 0;
+  }
+
+  /* ============ ROLE HELPERS ============ */
+  function isTeammate(me, other) {
+    if (me === landlord || other === landlord) return false;
+    return me !== other;
+  }
+  function isEnemy(me, other) {
+    if (me === other) return false;
+    if (me === landlord) return true; // landlord: all enemies
+    return other === landlord; // farmer: only landlord is enemy
+  }
+  function isEnemyClose(idx) {
+    for (var i = 0; i < 4; i++) {
+      if (i === idx) continue;
+      if (isEnemy(idx, i) && hands[i].length <= 5) return true;
+    }
+    return false;
+  }
+  function getClosestEnemyCards(idx) {
+    var min = 999;
+    for (var i = 0; i < 4; i++) {
+      if (i !== idx && isEnemy(idx, i) && hands[i].length < min) min = hands[i].length;
+    }
+    return min === 999 ? 99 : min;
+  }
+
+  function breaksBombCheck(cards, hand) {
+    var vc = getValueCounts(hand);
+    var pv = getValueCounts(cards);
+    for (var k in pv) {
+      if (pv.hasOwnProperty(k)) {
+        var v = Number(k);
+        if ((vc[v] || 0) >= 4 && pv[v] < (vc[v] || 0)) return true;
+      }
+    }
+    return false;
+  }
+
+  /* ============ HARD FILTERS (reject before scoring) ============ */
+  function isFiltered(ct, cards, hand, remaining, hcAfter, isFree, idx, finishes) {
+    if (finishes) return false;
+    var isBomb = (ct.type === 'bomb' || ct.type === 'rocket');
+    // four2 and four2p USE a bomb — treat them as bomb-wasting plays
+    var usesBomb = (ct.type === 'four2' || ct.type === 'four2p');
+    var handLen = hand.length;
+
+    // Rule 1: No bomb/rocket if still many cards
+    if (isBomb) {
+      if (remaining.length > 10) return true;
+      if (isFree && hcAfter > 2) return true;
+      if (!isFree) {
+        if (!isEnemyClose(idx) && hcAfter > 2) return true;
+      }
+    }
+
+    // Rule 1b: No four-with-2 (wastes a bomb) if still many cards
+    if (usesBomb) {
+      if (remaining.length > 15) return true;
+      if (isFree && hcAfter > 2) return true;
+      if (!isFree && !isEnemyClose(idx) && hcAfter > 2) return true;
+    }
+
+    if (isFree) {
+      // Rule 2: No single joker/2 unless close to finish
+      if (hcAfter > 2) {
+        if (ct.type === 'single' && ct.rank >= 15) return true;
+        if (ct.type === 'pair' && ct.rank === 15) return true;
+        if (ct.type === 'triple' && ct.rank === 15 && hcAfter > 3) return true;
+      }
+      // Rule 3: Don't play triple-2 (or triple-A) when many cards left
+      if (handLen > 20 && ct.type === 'triple' && ct.rank >= 14) return true;
+      if (handLen > 20 && ct.type === 'triple1' && ct.rank >= 14) return true;
+      if (handLen > 20 && ct.type === 'triple2' && ct.rank >= 14) return true;
+    } else {
+      // Following: avoid using high cards to beat low cards
+      if (ct.type === 'single' && ct.rank >= 15 && lastPlay && lastPlay.rank <= 9 && hcAfter > 2) return true;
+    }
+
+    // Rule 4: Don't break a bomb to play a non-bomb hand
+    if (!isBomb && !usesBomb && hcAfter > 2 && breaksBombCheck(cards, hand)) return true;
+
+    // Rule 5: When following, don't beat teammate unless finishing
+    if (!isFree && lastPlayer >= 0 && isTeammate(idx, lastPlayer)) {
+      if (isBomb || usesBomb) return true; // never bomb teammate
+    }
+
+    return false;
+  }
+
+  /* ============ SCORING ============ */
+  function scoreCandidate(ct, cards, hand, remaining, hcReduce, hcAfter, hcBefore, isFree, idx, finishes) {
+    if (finishes) return 10000;
+    var score = 0;
+
+    if (isFree) {
+      // Reward reducing hand count
+      score += hcReduce * 30;
+      // Reward being a master card (all bigger already played)
+      if (isCardMaster(ct.rank) && ct.rank >= 12) score += 15;
+      // Slight reward for longer hand types (clear more cards)
+      score += cards.length * 1.5;
+
+      // Penalty: playing high single when still many cards
+      if (ct.type === 'single' && ct.rank >= 11) {
+        score -= Math.pow(1.8, ct.rank - 10) * (hcBefore > 4 ? 5 : 2);
+      }
+      // Penalty: big pair
+      if (ct.type === 'pair' && ct.rank >= 13 && hcBefore > 3) score -= 30;
+      // Penalty: big triple
+      if (ct.type === 'triple' && ct.rank >= 13 && hcBefore > 3) score -= 40;
+
+      // Bonus: encourage early release of small singles/pairs
+      if (ct.type === 'single' && ct.rank <= 7) score += 8;
+      if (ct.type === 'pair' && ct.rank <= 8) score += 10;
+      if (ct.type === 'straight') score += 20;
+      if (ct.type === 'doublestraight') score += 15;
+      if (ct.type === 'plane') score += 25;
+      if (ct.type === 'plane1' || ct.type === 'plane2') score += 20;
+      if (ct.type === 'triple1' || ct.type === 'triple2') score += 5;
+      // Penalty: four2 and four2p use a bomb; penalize unless close to winning
+      if ((ct.type === 'four2' || ct.type === 'four2p') && hcBefore > 2) {
+        score -= 80; // strong penalty for wasting a bomb
+      }
+
+      // Position strategy
+      var next = (idx + 1) % 4;
+      if (idx !== landlord) {
+        // Farmer playing
+        if (next === landlord) {
+          // Downstream is landlord -> suppress with bigger cards
+          if (ct.type === 'single' && ct.rank >= 11) score += 15;
+          if (ct.type === 'pair' && ct.rank >= 10) score += 15;
+        } else if (hands[next].length <= 4) {
+          // Teammate almost done -> feed small cards
+          if (ct.type === 'single' && ct.rank <= 8) score += 25;
+          if (ct.type === 'pair' && ct.rank <= 7) score += 20;
+        }
+      } else {
+        // Landlord playing
+        // Prefer to play medium-length combos first to test opponents
+        if (hcBefore >= 5) {
+          if (ct.type === 'straight' && ct.rank <= 10) score += 10;
+          if (ct.type === 'pair' && ct.rank <= 9) score += 8;
+        }
+      }
+    } else {
+      // Following
+      score += 10 + hcReduce * 25;
+
+      // Strong penalty for using high to beat low
+      if (ct.type === 'single' && ct.rank >= 14 && lastPlay && lastPlay.rank <= 9 && hcBefore > 3) score -= 80;
+      if (ct.rank >= 13 && lastPlay && lastPlay.rank <= 10 && hcBefore > 3) score -= 40;
+
+      // Teammate handling
+      if (lastPlayer >= 0 && isTeammate(idx, lastPlayer)) {
+        score -= 60; // Don't beat teammate by default
+        // Exception: if teammate's play is small and enemy (landlord) is close to winning
+        if (hands[landlord].length <= 5 && lastPlay && lastPlay.rank <= 10) score += 40;
+      }
+
+      // Beating landlord (as farmer)
+      if (idx !== landlord && lastPlayer === landlord) {
+        score += 20;
+        if (hands[landlord].length <= 5) score += 30;
+        if (isCardMaster(ct.rank)) score += 15;
+      }
+
+      // As landlord, beating farmers
+      if (idx === landlord) {
+        score += 10;
+        var minEnemy = getClosestEnemyCards(idx);
+        if (minEnemy <= 5) score += 25;
+      }
+
+      // Avoid bombing unnecessarily
+      if (ct.type === 'bomb' && hcBefore > 3) {
+        score -= 50;
+        if (lastPlay && lastPlay.rank <= 9) score -= 40; // bombing a small play
+      }
+      if (ct.type === 'rocket' && hcBefore > 2) score -= 100;
+
+      // Enemy about to finish - urgency
+      if (isEnemyClose(idx)) score += 30;
+    }
+    return score;
+  }
+
+  /* ============ AI PLAY ============ */
+  function aiPlay(idx) {
+    var hand = hands[idx];
+    var isFree = (passCount >= 3 || lastPlay === null || lastPlayer === idx);
+    var candidates = findValid(hand, isFree ? null : lastPlay);
+    if (candidates.length === 0) return null;
+
+    // Dedupe by value signature
+    var seen = {}, unique = [];
+    for (var di = 0; di < candidates.length; di++) {
+      var sVals = [];
+      for (var cdi = 0; cdi < candidates[di].length; cdi++) sVals.push(candidates[di][cdi].value);
+      sVals.sort(function(a, b) { return a - b; });
+      var sig = sVals.join(',');
+      if (!seen[sig]) { seen[sig] = true; unique.push(candidates[di]); }
+    }
+
+    var scored = [];
+    var i, c, ct, rem, hcB, hcA, fin, sc;
+
+    for (i = 0; i < unique.length; i++) {
+      c = unique[i];
+      ct = classifyHand(c);
+      if (!ct) continue;
+      if (!isFree && !canBeat(ct, lastPlay)) continue;
+      rem = removeCards(hand, c);
+      hcB = estimateHandCount(hand);
+      hcA = estimateHandCount(rem);
+      fin = (rem.length === 0);
+      if (isFiltered(ct, c, hand, rem, hcA, isFree, idx, fin)) continue;
+      sc = scoreCandidate(ct, c, hand, rem, hcB - hcA, hcA, hcB, isFree, idx, fin);
+      scored.push({ cards: c, type: ct, score: sc, finishes: fin });
+    }
+
+    // Fallback: if all filtered and we MUST play (can't pass when free)
+    if (scored.length === 0 && isFree) {
+      for (i = 0; i < unique.length; i++) {
+        c = unique[i]; ct = classifyHand(c);
+        if (!ct) continue;
+        rem = removeCards(hand, c);
+        hcA = estimateHandCount(rem);
+        hcB = estimateHandCount(hand);
+        fin = (rem.length === 0);
+        // Relaxed filter: only reject rocket and huge bombs when not urgent
+        if (ct.type === 'rocket' && !fin && hcA > 1) continue;
+        if (ct.type === 'bomb' && ct.bombSize >= 5 && !fin && hcA > 1) continue;
+        sc = scoreCandidate(ct, c, hand, rem, hcB - hcA, hcA, hcB, isFree, idx, fin);
+        scored.push({ cards: c, type: ct, score: sc, finishes: fin });
+      }
+      // Ultimate fallback: pick smallest single
+      if (scored.length === 0) {
+        var smallest = hand[0];
+        for (var h = 1; h < hand.length; h++) if (hand[h].value < smallest.value) smallest = hand[h];
+        return [smallest];
+      }
+    }
+
+    if (scored.length === 0) return null; // following: pass
+
+    scored.sort(function(a, b) { return b.score - a.score; });
+
+    // Pass threshold for following
+    if (!isFree && scored[0].score < 0 && !scored[0].finishes) return null;
+    if (!isFree && scored[0].score < -30) return null;
+
+    return scored[0].cards;
+  }
+
+  /* ============ HINTS ============ */
+  function generateHints() {
+    var isFree = (passCount >= 3 || lastPlay === null || lastPlayer === PLAYER);
+    var cands = findValid(hands[PLAYER], isFree ? null : lastPlay);
+    if (!isFree) {
+      var f = [];
+      for (var fi = 0; fi < cands.length; fi++) {
+        var fc = classifyHand(cands[fi]);
+        if (fc && canBeat(fc, lastPlay)) f.push(cands[fi]);
+      }
+      cands = f;
+    }
+    var seen = {}, unique = [];
+    for (var i = 0; i < cands.length; i++) {
+      var vArr = [];
+      for (var ci = 0; ci < cands[i].length; ci++) vArr.push(cands[i][ci].value);
+      vArr.sort(function(a, b) { return a - b; });
+      var sig = vArr.join(',');
+      if (!seen[sig]) { seen[sig] = true; unique.push(cands[i]); }
+    }
+    unique.sort(function(a, b) {
+      var ta = classifyHand(a), tb = classifyHand(b);
+      if (!ta || !tb) return 0;
+      var ab = (ta.type === 'bomb' || ta.type === 'rocket');
+      var bb = (tb.type === 'bomb' || tb.type === 'rocket');
+      var abr = breaksBombCheck(a, hands[PLAYER]);
+      var bbr = breaksBombCheck(b, hands[PLAYER]);
+      if (abr !== bbr) return abr ? 1 : -1;
+      if (ab !== bb) return ab ? 1 : -1;
+      var ra = removeCards(hands[PLAYER], a);
+      var rb = removeCards(hands[PLAYER], b);
+      var ha = estimateHandCount(hands[PLAYER]) - estimateHandCount(ra);
+      var hb = estimateHandCount(hands[PLAYER]) - estimateHandCount(rb);
+      if (ha !== hb) return hb - ha;
+      if (a.length !== b.length) return b.length - a.length;
+      return ta.rank - tb.rank;
+    });
+    return unique;
+  }
+
+  /* ============ AUDIO ============ */
+  function initAudio() {
+    if (audioCtx) return;
+    try { var AC = window.AudioContext || window.webkitAudioContext; if (AC) audioCtx = new AC(); } catch(e) {}
+  }
+
+  function playSound(type) {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime;
+      var o, g;
+      if (type === 'play') {
+        o = audioCtx.createOscillator(); g = audioCtx.createGain();
+        o.type = 'square'; o.frequency.setValueAtTime(800, t); o.frequency.linearRampToValueAtTime(400, t + 0.08);
+        g.gain.setValueAtTime(0.15, t); g.gain.linearRampToValueAtTime(0, t + 0.1);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + 0.1);
+      } else if (type === 'pass') {
+        o = audioCtx.createOscillator(); g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.setValueAtTime(200, t); o.frequency.linearRampToValueAtTime(100, t + 0.15);
+        g.gain.setValueAtTime(0.1, t); g.gain.linearRampToValueAtTime(0, t + 0.15);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + 0.15);
+      } else if (type === 'bomb') {
+        var buf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.3), audioCtx.sampleRate);
+        var d = buf.getChannelData(0);
+        for (var bi = 0; bi < d.length; bi++) d[bi] = (Math.random() * 2 - 1) * Math.exp(-bi / (d.length * 0.3));
+        var src = audioCtx.createBufferSource(); src.buffer = buf;
+        g = audioCtx.createGain(); g.gain.setValueAtTime(0.3, t); g.gain.linearRampToValueAtTime(0, t + 0.3);
+        src.connect(g); g.connect(audioCtx.destination); src.start(t);
+      } else if (type === 'win') {
+        var fr = [523, 659, 784, 1047];
+        for (var wi = 0; wi < fr.length; wi++) {
+          o = audioCtx.createOscillator(); g = audioCtx.createGain();
+          o.type = 'triangle'; o.frequency.value = fr[wi];
+          g.gain.setValueAtTime(0, t + wi * 0.12); g.gain.linearRampToValueAtTime(0.15, t + wi * 0.12 + 0.02);
+          g.gain.linearRampToValueAtTime(0, t + wi * 0.12 + 0.2);
+          o.connect(g); g.connect(audioCtx.destination); o.start(t + wi * 0.12); o.stop(t + wi * 0.12 + 0.2);
+        }
+      } else if (type === 'lose') {
+        var fr2 = [400, 280];
+        for (var li = 0; li < fr2.length; li++) {
+          o = audioCtx.createOscillator(); g = audioCtx.createGain();
+          o.type = 'sawtooth'; o.frequency.value = fr2[li];
+          g.gain.setValueAtTime(0.12, t + li * 0.2); g.gain.linearRampToValueAtTime(0, t + li * 0.2 + 0.25);
+          o.connect(g); g.connect(audioCtx.destination); o.start(t + li * 0.2); o.stop(t + li * 0.2 + 0.25);
+        }
+      } else if (type === 'bid') {
+        o = audioCtx.createOscillator(); g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = 660;
+        g.gain.setValueAtTime(0.12, t); g.gain.linearRampToValueAtTime(0, t + 0.1);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + 0.1);
+      } else if (type === 'select') {
+        o = audioCtx.createOscillator(); g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = 1200;
+        g.gain.setValueAtTime(0.08, t); g.gain.linearRampToValueAtTime(0, t + 0.05);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + 0.05);
+      }
+    } catch(e) {}
+  }
+
+  /* ============ UI ============ */
+  function renderAll() {
+    renderAI(AI_A, 'aiA'); renderAI(AI_B, 'aiB'); renderAI(AI_C, 'aiC');
+    renderPlayerHand(); renderMultInfo(); renderScore(); renderLandlordBadges();
+  }
+
+  function renderAI(idx, prefix) {
+    var nameEl = document.getElementById(prefix + 'name');
+    var countEl = document.getElementById(prefix + 'count');
+    var cardsEl = document.getElementById(prefix + 'cards');
+    if (!nameEl || !countEl || !cardsEl) return;
+    nameEl.textContent = PLAYER_NAMES[idx];
+    countEl.textContent = hands[idx].length + '\u5f20';
+    cardsEl.innerHTML = '';
+    if (cheatMode) {
+      for (var i = 0; i < hands[idx].length; i++) {
+        var c = hands[idx][i];
+        var div = document.createElement('span');
+        div.className = 'mini-card ' + cardColor(c);
+        div.innerHTML = cardDisplayHtml(c);
+        cardsEl.appendChild(div);
+      }
+    } else {
+      for (var i = 0; i < hands[idx].length; i++) {
+        var div = document.createElement('span');
+        div.className = 'back-card';
+        cardsEl.appendChild(div);
+      }
+    }
+  }
+
+  function renderPlayerHand() {
+    var area = document.getElementById('handArea');
+    if (!area) return;
+    area.innerHTML = '';
+    for (var i = 0; i < hands[PLAYER].length; i++) {
+      var c = hands[PLAYER][i];
+      var div = document.createElement('span');
+      div.className = 'hand-card ' + cardColor(c);
+      if (selectedCards[i]) div.className += ' selected';
+      div.innerHTML = cardDisplayHtml(c);
+      div.setAttribute('data-idx', '' + i);
+      (function(idx) {
+        div.addEventListener('click', function() { toggleCard(idx); }, false);
+      })(i);
+      area.appendChild(div);
+    }
+  }
+
+  function toggleCard(idx) {
+    initAudio();
+    if (selectedCards[idx]) delete selectedCards[idx];
+    else { selectedCards[idx] = true; playSound('select'); }
+    hintList = []; hintIndex = -1;
+    renderPlayerHand();
+  }
+
+  function getSelectedCards() {
+    var r = [];
+    for (var k in selectedCards) {
+      if (selectedCards.hasOwnProperty(k)) {
+        var idx = parseInt(k, 10);
+        if (idx < hands[PLAYER].length) r.push(hands[PLAYER][idx]);
+      }
+    }
+    return r;
+  }
+
+  function clearSelection() { selectedCards = {}; }
+
+  function renderPlayedCards(pIdx, cards) {
+    var elIds = ['playedP', 'playedC', 'playedB', 'playedA'];
+    var el = document.getElementById(elIds[pIdx]);
+    if (!el) return;
+    el.innerHTML = '';
+    if (!cards) { el.innerHTML = '<span class="pass-text">\u8fc7</span>'; return; }
+    var sorted = cards.slice(0);
+    sortCards(sorted);
+    for (var i = 0; i < sorted.length; i++) {
+      var c = sorted[i];
+      var div = document.createElement('span');
+      div.className = 'played-card ' + cardColor(c);
+      div.innerHTML = cardDisplayHtml(c);
+      el.appendChild(div);
+    }
+  }
+
+  function clearAllPlayed() {
+    var ids = ['playedP', 'playedA', 'playedB', 'playedC'];
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      if (el) el.innerHTML = '';
+    }
+  }
+
+  function renderMultInfo() {
+    var el = document.getElementById('multInfo');
+    if (!el) return;
+    el.textContent = baseScore > 0 ? ('\u500d\u6570:' + multiplier + 'x | \u5e95\u5206:' + baseScore) : '';
+  }
+
+  function renderScore() {
+    var el = document.getElementById('scoreDisplay');
+    if (el) el.textContent = '\u79ef\u5206: ' + totalScore;
+  }
+
+  function renderLandlordBadges() {
+    if (landlord < 0) return;
+    var prefixes = ['', 'aiC', 'aiB', 'aiA'];
+    for (var i = 1; i < 4; i++) {
+      var nameEl = document.getElementById(prefixes[i] + 'name');
+      if (!nameEl) continue;
+      nameEl.innerHTML = PLAYER_NAMES[i];
+      if (i === landlord) nameEl.innerHTML += ' <span class="landlord-badge">\u5730\u4e3b</span>';
+    }
+  }
+
+  function showActionBar(isFree) {
+    var bar = document.getElementById('actionBar');
+    if (!bar) return;
+    bar.style.display = 'flex';
+    var pb = document.getElementById('passBtn');
+    if (pb) pb.style.display = isFree ? 'none' : 'inline-block';
+  }
+
+  function hideActionBar() {
+    var bar = document.getElementById('actionBar');
+    if (bar) bar.style.display = 'none';
+  }
+
+  function showToast(msg, dur) {
+    var el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg; el.style.display = 'block';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { el.style.display = 'none'; }, dur || 1500);
+  }
+
+  function showBidButtons(minBid) {
+    var area = document.getElementById('bidBtns');
+    if (!area) return;
+    area.style.display = 'block';
+    area.innerHTML = '';
+    var btn;
+    for (var s = minBid; s <= 3; s++) {
+      btn = document.createElement('button');
+      btn.className = 'bid-score'; btn.textContent = s + '\u5206';
+      (function(sc) { btn.addEventListener('click', function() { playerBid(sc); }, false); })(s);
+      area.appendChild(btn);
+    }
+    btn = document.createElement('button');
+    btn.className = 'bid-pass'; btn.textContent = '\u4e0d\u53eb';
+    btn.addEventListener('click', function() { playerBid(0); }, false);
+    area.appendChild(btn);
+  }
+
+  function hideBidButtons() {
+    var area = document.getElementById('bidBtns');
+    if (area) area.style.display = 'none';
+  }
+
+  function showDipai() {
+    var area = document.getElementById('dipaiArea');
+    if (!area) return;
+    area.style.display = 'block';
+    var cardsEl = document.getElementById('dipaiCards');
+    if (!cardsEl) return;
+    cardsEl.innerHTML = '';
+    for (var i = 0; i < dipai.length; i++) {
+      var c = dipai[i];
+      var div = document.createElement('span');
+      div.className = 'dipai-card ' + cardColor(c);
+      div.innerHTML = cardDisplayHtml(c);
+      cardsEl.appendChild(div);
+    }
+  }
+
+  function hideDipai() {
+    var area = document.getElementById('dipaiArea');
+    if (area) area.style.display = 'none';
+  }
+
+  function showResult(won, springType, delta) {
+    var modal = document.getElementById('resultModal');
+    if (modal) modal.style.display = 'block';
+    var card = document.getElementById('resultCard');
+    if (card) card.className = won ? 'win' : 'lose';
+    var titleEl = document.getElementById('resultTitle');
+    if (titleEl) titleEl.textContent = won ? '\u80dc \u5229 \uff01' : '\u5931 \u8d25';
+    var badge = document.getElementById('springBadge');
+    if (badge) {
+      if (springType) { badge.style.display = 'inline-block'; badge.textContent = '\u2728 ' + springType + ' \u2728'; }
+      else badge.style.display = 'none';
+    }
+    var role = (PLAYER === landlord) ? '\u5730\u4e3b' : '\u8fb2\u6c11';
+    var det = document.getElementById('resultDetails');
+    if (det) det.innerHTML = '\u8eab\u4efd: ' + role + '<br>\u5e95\u5206: ' + baseScore + ' \u00d7 \u500d\u6570: ' + multiplier;
+    var scoreEl = document.getElementById('resultScore');
+    if (scoreEl) { scoreEl.style.color = delta >= 0 ? '#f0c040' : '#ff6666'; scoreEl.textContent = (delta >= 0 ? '+' : '') + delta; }
+    var totalEl = document.getElementById('totalScore');
+    if (totalEl) totalEl.textContent = '\u603b\u79ef\u5206: ' + totalScore;
+    if (won) { spawnConfetti(); playSound('win'); } else playSound('lose');
+  }
+
+  function hideResult() {
+    var modal = document.getElementById('resultModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function spawnConfetti() {
+    var area = document.body;
+    var colors = ['#f0c040', '#ff6666', '#66ccff', '#66ff66', '#ff66cc', '#ffaa00'];
+    for (var i = 0; i < 40; i++) {
+      var div = document.createElement('div');
+      div.className = 'confetti';
+      div.style.left = Math.random() * 100 + '%';
+      div.style.top = Math.random() * 30 + '%';
+      div.style.background = colors[Math.floor(Math.random() * colors.length)];
+      div.style.webkitAnimationDelay = (Math.random() * 0.5) + 's';
+      div.style.animationDelay = (Math.random() * 0.5) + 's';
+      area.appendChild(div);
+      (function(d) { setTimeout(function() { if (d.parentNode) d.parentNode.removeChild(d); }, 3000); })(div);
+    }
+  }
+
+  /* ============ EVENT BINDINGS ============ */
+  function bindBtn(id, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn, false);
+  }
+
+  bindBtn('ruleBtn', function() {
+    var m = document.getElementById('ruleModal');
+    if (m) m.style.display = 'block';
+  });
+  bindBtn('cheatBtn', function() {
+    initAudio(); cheatMode = !cheatMode;
+    var btn = document.getElementById('cheatBtn');
+    if (btn) btn.className = cheatMode ? 'active' : '';
+    renderAll();
+  });
+  bindBtn('hintBtn', function() { onHint(); });
+  bindBtn('passBtn', function() { onPass(); });
+  bindBtn('playBtn', function() { onPlayAction(); });
+  bindBtn('restartBtn', function() { startGame(); });
+
+  var ruleModal = document.getElementById('ruleModal');
+  if (ruleModal) ruleModal.addEventListener('click', function() { ruleModal.style.display = 'none'; }, false);
+  var ruleContent = document.getElementById('ruleContent');
+  if (ruleContent) ruleContent.addEventListener('click', function(e) { e.stopPropagation(); }, false);
+  var closeRuleBtn = ruleContent ? ruleContent.querySelector('.close-rule') : null;
+  if (closeRuleBtn) closeRuleBtn.addEventListener('click', function() { if (ruleModal) ruleModal.style.display = 'none'; }, false);
+
+  /* ============ GAME FLOW ============ */
+  function startGame() {
+    initAudio();
+    hideResult(); hideBidButtons(); hideDipai(); hideActionBar(); clearAllPlayed();
+    var ci = document.getElementById('centerInfo');
+    if (ci) ci.textContent = '';
+
+    hands = [[], [], [], []]; dipai = []; landlord = -1; currentTurn = -1;
+    lastPlay = null; lastPlayer = -1; passCount = 0; baseScore = 0; multiplier = 1;
+    gamePhase = 'idle'; bidHistory = []; currentBidder = -1; highestBid = 0; highestBidder = -1;
+    selectedCards = {}; hintList = []; hintIndex = -1; playerPlayCount = [0, 0, 0, 0];
+    cheatMode = false;
+    var cb = document.getElementById('cheatBtn');
+    if (cb) cb.className = '';
+    resetPlayedRecord();
+
+    var deck = shuffleDeck(createDeck());
+    for (var i = 0; i < 100; i++) hands[i % 4].push(deck[i]);
+    for (var i = 100; i < 108; i++) dipai.push(deck[i]);
+    for (var i = 0; i < 4; i++) sortCards(hands[i]);
+
+    gamePhase = 'bidding';
+    renderAll();
+    currentBidder = Math.floor(Math.random() * 4);
+    setTimeout(doBidding, 600);
+  }
+
+  function doBidding() {
+    if (gamePhase !== 'bidding') return;
+    if (currentBidder === PLAYER) {
+      var ci = document.getElementById('centerInfo');
+      if (ci) ci.textContent = '\u8bf7\u53eb\u5206';
+      var minBid = highestBid + 1;
+      if (minBid > 3) { playerBid(0); return; }
+      showBidButtons(minBid);
+    } else {
+      var bv = aiBid(currentBidder);
+      if (bv > 0 && bv <= highestBid) bv = 0;
+      if (bv > 3) bv = 3;
+      processBid(currentBidder, bv);
+    }
+  }
+
+  function playerBid(score) {
+    initAudio(); hideBidButtons(); processBid(PLAYER, score);
+  }
+
+  function processBid(pIdx, score) {
+    bidHistory.push({ player: pIdx, score: score });
+    var ci = document.getElementById('centerInfo');
+    if (score > 0) {
+      playSound('bid');
+      if (ci) ci.textContent = PLAYER_NAMES[pIdx] + ' \u53eb ' + score + '\u5206';
+      highestBid = score; highestBidder = pIdx;
+      if (score === 3) { setTimeout(finalizeLandlord, 800); return; }
+    } else {
+      if (ci) ci.textContent = PLAYER_NAMES[pIdx] + ' \u4e0d\u53eb';
+    }
+    if (bidHistory.length >= 4) {
+      if (highestBidder >= 0) setTimeout(finalizeLandlord, 800);
+      else { showToast('\u65e0\u4eba\u53eb\u5206\uff0c\u91cd\u65b0\u53d1\u724c', 1500); setTimeout(startGame, 2000); }
+      return;
+    }
+    currentBidder = (currentBidder + 1) % 4;
+    setTimeout(doBidding, 800);
+  }
+
+  function finalizeLandlord() {
+    landlord = highestBidder; baseScore = highestBid;
+    var ci = document.getElementById('centerInfo');
+    if (ci) ci.textContent = PLAYER_NAMES[landlord] + ' \u6210\u4e3a\u5730\u4e3b';
+    showDipai();
+    for (var i = 0; i < dipai.length; i++) hands[landlord].push(dipai[i]);
+    sortCards(hands[landlord]);
+    renderAll();
+    setTimeout(function() {
+      hideDipai();
+      if (ci) ci.textContent = '';
+      gamePhase = 'playing'; currentTurn = landlord; passCount = 0;
+      lastPlay = null; lastPlayer = landlord; clearAllPlayed();
+      doTurn();
+    }, 2500);
+  }
+
+  function doTurn() {
+    if (gamePhase !== 'playing') return;
+    var isFree = (lastPlay === null || lastPlayer === currentTurn || passCount >= 3);
+    if (isFree) { passCount = 0; lastPlay = null; clearAllPlayed(); }
+    if (currentTurn === PLAYER) {
+      showActionBar(isFree); clearSelection(); renderPlayerHand();
+    } else {
+      hideActionBar(); setTimeout(aiDoTurn, 800);
+    }
+  }
+
+  function aiDoTurn() {
+    if (gamePhase !== 'playing') return;
+    var isFree = (lastPlay === null || lastPlayer === currentTurn || passCount >= 3);
+    if (isFree) { passCount = 0; lastPlay = null; clearAllPlayed(); }
+    var cards = aiPlay(currentTurn);
+    if (cards) {
+      var ct = classifyHand(cards);
+      executePlay(currentTurn, cards, ct);
+    } else {
+      playSound('pass'); renderPlayedCards(currentTurn, null); passCount++; advanceTurn();
+    }
+  }
+
+  function executePlay(pIdx, cards, ct) {
+    hands[pIdx] = removeCards(hands[pIdx], cards);
+    playerPlayCount[pIdx]++;
+    recordPlayed(cards);
+    lastPlay = ct; lastPlayer = pIdx; passCount = 0;
+    if (ct.type === 'bomb' || ct.type === 'rocket') { multiplier *= 2; playSound('bomb'); }
+    else playSound('play');
+    renderPlayedCards(pIdx, cards); renderAll();
+    if (hands[pIdx].length === 0) { endGame(pIdx); return; }
+    advanceTurn();
+  }
+
+  function advanceTurn() {
+    currentTurn = (currentTurn + 1) % 4;
+    setTimeout(doTurn, 200);
+  }
+
+  function onPlayAction() {
+    if (gamePhase !== 'playing' || currentTurn !== PLAYER) return;
+    initAudio();
+    var cards = getSelectedCards();
+    if (cards.length === 0) { showToast('\u8bf7\u9009\u62e9\u8981\u51fa\u7684\u724c', 1000); return; }
+    var ct = classifyHand(cards);
+    if (!ct) { showToast('\u65e0\u6548\u724c\u578b', 1000); return; }
+    var isFree = (lastPlay === null || lastPlayer === PLAYER || passCount >= 3);
+    if (!isFree && !canBeat(ct, lastPlay)) { showToast('\u6253\u4e0d\u8fc7', 1000); return; }
+    hideActionBar(); clearSelection(); executePlay(PLAYER, cards, ct);
+  }
+
+  function onPass() {
+    if (gamePhase !== 'playing' || currentTurn !== PLAYER) return;
+    initAudio(); playSound('pass'); hideActionBar(); clearSelection();
+    renderPlayedCards(PLAYER, null); passCount++; advanceTurn();
+  }
+
+  function onHint() {
+    if (gamePhase !== 'playing' || currentTurn !== PLAYER) return;
+    initAudio();
+    if (hintList.length === 0) { hintList = generateHints(); hintIndex = -1; }
+    if (hintList.length === 0) { showToast('\u6ca1\u6709\u53ef\u51fa\u7684\u724c', 1000); return; }
+    hintIndex = (hintIndex + 1) % hintList.length;
+    var hint = hintList[hintIndex];
+    selectedCards = {};
+    for (var i = 0; i < hint.length; i++) {
+      for (var j = 0; j < hands[PLAYER].length; j++) {
+        if (hands[PLAYER][j].id === hint[i].id) { selectedCards[j] = true; break; }
+      }
+    }
+    renderPlayerHand();
+    showToast('\u65b9\u6848 ' + (hintIndex + 1) + '/' + hintList.length, 1000);
+  }
+
+  function endGame(winner) {
+    gamePhase = 'ended'; hideActionBar();
+    var springType = null;
+    if (winner === landlord) {
+      var fp = false;
+      for (var i = 0; i < 4; i++) if (i !== landlord && playerPlayCount[i] > 0) { fp = true; break; }
+      if (!fp) { springType = '\u6625\u5929'; multiplier *= 2; }
+    } else {
+      if (playerPlayCount[landlord] <= 1) { springType = '\u53cd\u6625\u5929'; multiplier *= 2; }
+    }
+    var llWon = (winner === landlord);
+    var pIsLL = (PLAYER === landlord);
+    var pWon = pIsLL ? llWon : !llWon;
+    var delta = pIsLL ? (baseScore * multiplier * 3 * (pWon ? 1 : -1)) : (baseScore * multiplier * (pWon ? 1 : -1));
+    totalScore += delta;
+    cheatMode = true;
+    var cb = document.getElementById('cheatBtn');
+    if (cb) cb.className = 'active';
+    renderAll();
+    setTimeout(function() { showResult(pWon, springType, delta); }, 500);
+  }
+
+  /* ============ INIT ============ */
+  function fixHeight() { document.body.style.height = window.innerHeight + 'px'; }
+  window.addEventListener('resize', fixHeight, false);
+  fixHeight();
+
+  document.addEventListener('touchstart', function() { initAudio(); }, false);
+  document.addEventListener('click', function() { initAudio(); }, false);
+
+  window.startGame = startGame;
+  startGame();
+})();
